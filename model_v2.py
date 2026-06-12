@@ -17,14 +17,19 @@ ROOT = Path(__file__).resolve().parent
 RAW_DIR = ROOT / "data" / "raw"
 PROCESSED_DIR = ROOT / "data" / "processed"
 
+# Weights are tuned for a FORWARD-LOOKING "2026 season outlook" rather than a
+# backward-looking recap of 2025. Last year's team quality is now a program-baseline
+# input (still the second-largest piece) instead of the dominant factor, and the
+# roster-construction signals that actually drive a new season — who's coming back,
+# the QB, the transfer haul, and recruiting talent — carry the most weight together.
 POWER_WEIGHTS = {
-    "prior_year_team_quality_score": 0.35,
-    "returning_production_score": 0.20,
-    "qb_score": 0.12,
-    "transfer_impact_score": 0.10,
-    "recruiting_talent_score": 0.08,
-    "coaching_continuity_score": 0.07,
-    "schedule_strength_score": 0.05,
+    "prior_year_team_quality_score": 0.22,
+    "returning_production_score": 0.26,
+    "qb_score": 0.14,
+    "transfer_impact_score": 0.14,
+    "recruiting_talent_score": 0.12,
+    "coaching_continuity_score": 0.05,
+    "schedule_strength_score": 0.04,
     "context_score": 0.03,
 }
 
