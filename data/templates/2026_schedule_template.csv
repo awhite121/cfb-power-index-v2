@@ -1,0 +1,2 @@
+game_id,season,week,season_type,start_date,start_time_tbd,home_team,away_team,home_conference,away_conference,neutral_site,conference_game,venue,city,state,notes
+1,2026,1,regular,2026-08-29,false,Texas,Ohio State,SEC,Big Ten,false,false,DKR,Austin,TX,example row - replace with API pull

@@ -1,0 +1,21 @@
+# secrets
+.env
+.streamlit/secrets.toml
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS/editor
+.DS_Store
+.cursor/
+.vscode/
+
+# logs
+logs/*.log
+
+# optional large/raw pulls
+# data/raw/*.csv
+# data/processed/*.csv

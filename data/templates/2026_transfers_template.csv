@@ -1,0 +1,2 @@
+team,player,position,previous_team,new_team,stars,rating,national_rank,position_rank,transfer_team_rank,projected_starter,projected_unit,prior_team_level,prior_games,prior_starts,prior_snaps,prior_passing_yards,prior_rushing_yards,prior_receiving_yards,prior_tackles,prior_tfl,prior_sacks,prior_int,eligibility_remaining,source,source_url,last_verified_date,notes
+Texas,Example Transfer,QB,Example State,Texas,4,0.93,25,3,5,1,offense,P4,12,12,750,2800,250,0,0,0,0,0,2,manual,,,,example row - replace with real data

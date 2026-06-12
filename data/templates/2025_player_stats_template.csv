@@ -1,0 +1,2 @@
+season,team,conference,player,cfbd_player_id,position,games_played,games_started,snaps,passing_attempts,completions,passing_yards,passing_tds,interceptions,rushing_attempts,rushing_yards,rushing_tds,receptions,targets,receiving_yards,receiving_tds,tackles,tfl,sacks,passes_defended,interceptions_def,forced_fumbles,fumbles_recovered,category_source,last_verified_date,notes
+2025,Texas,SEC,Example Player,,QB,12,12,750,300,200,2800,24,6,80,250,4,0,0,0,0,0,0,0,0,0,0,0,manual,,example row - replace with real data

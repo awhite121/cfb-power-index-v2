@@ -1,0 +1,2 @@
+team,projected_qb,qb_status,prior_passing_efficiency,prior_attempts,prior_passing_yards,prior_passing_tds,prior_interceptions,prior_rushing_yards,turnover_avoidance,recruiting_transfer_grade,new_projected_qb,source,source_url,last_verified_date,notes
+Texas,Example QB,returning_solid_starter,85,300,2800,24,6,250,85,90,0,manual,,,,example row - replace with real data

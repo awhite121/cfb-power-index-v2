@@ -1,0 +1,2 @@
+game_id,season,week,season_type,start_date,game_indoors,home_team,away_team,venue,temperature,humidity,dewpoint,pressure,wind_direction,wind_speed,weather_condition,precipitation,forecast_source,last_verified_date,notes
+1,2026,1,regular,2026-08-29,false,Texas,Ohio State,DKR,92,50,,,S,8,Clear,0,manual,,example row - optional

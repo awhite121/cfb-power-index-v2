@@ -1,0 +1,9 @@
+component,weight,teams_with_real_data,teams_total,coverage_pct
+prior_year_team_quality_score,0.35,138,138,100.0
+returning_production_score,0.2,13,138,9.4
+qb_score,0.12,138,138,100.0
+transfer_impact_score,0.1,135,138,97.8
+recruiting_talent_score,0.08,138,138,100.0
+coaching_continuity_score,0.07,138,138,100.0
+schedule_strength_score,0.05,138,138,100.0
+context_score,0.03,0,138,0.0
