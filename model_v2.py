@@ -308,7 +308,53 @@ def build_qb_from_2025_stats() -> pd.DataFrame:
     )
 
 
+def build_qb_from_starters_file() -> pd.DataFrame:
+    """Authoritative 2026 QB signal from the curated, portal- and draft-aware
+    2026_qb_starters.csv (built by scripts/build_2026_qbs.py). Each projected
+    starter is scored off their 2025 passing line, which follows transfers to
+    their new school. QBs with no 2025 college passing line (true freshmen /
+    FCS / JUCO) get a modest unproven prior. Fully editable by hand."""
+    qb = read_csv_if_exists(RAW_DIR / "2026_qb_starters.csv")
+    if qb.empty or not {"team", "qb"}.issubset(qb.columns):
+        return pd.DataFrame(columns=["team", "qb_score", "qb_status", "projected_qb"])
+    for c in ["att_2025", "yds_2025", "td_2025", "int_2025", "pct_2025", "ypa_2025"]:
+        if c not in qb.columns:
+            qb[c] = np.nan
+        qb[c] = pd.to_numeric(qb[c], errors="coerce")
+    score = pd.Series(np.nan, index=qb.index)
+    has = qb["att_2025"].fillna(0) >= 50
+    if has.any():
+        sub = qb[has]
+        s = (
+            0.30 * normalize_series(sub["ypa_2025"])
+            + 0.25 * normalize_series(sub["td_2025"])
+            + 0.20 * normalize_series(sub["pct_2025"])
+            + 0.15 * normalize_series(sub["int_2025"], higher_is_better=False)
+            + 0.10 * normalize_series(sub["att_2025"])
+        ).clip(0, 100)
+        score.loc[sub.index] = s
+    # Unproven QBs (no qualifying 2025 line) get a slightly-below-neutral prior.
+    score = score.fillna(45.0).clip(0, 100)
+    out = pd.DataFrame({
+        "team": qb["team"].astype(str),
+        "qb_score": score,
+        "qb_status": qb.get("status", pd.Series("", index=qb.index)).astype(str),
+        "projected_qb": qb["qb"].astype(str),
+    })
+    out = out[out["projected_qb"].astype(str).str.strip().ne("")]
+    return out.groupby("team", as_index=False).agg(
+        qb_score=("qb_score", "max"),
+        qb_status=("qb_status", "first"),
+        projected_qb=("projected_qb", "first"),
+    )
+
+
 def build_qb_score() -> pd.DataFrame:
+    # Highest priority: the curated, portal/draft-aware 2026 starter list.
+    from_starters = build_qb_from_starters_file()
+    if not from_starters.empty:
+        return from_starters
+
     qb = read_csv_if_exists(RAW_DIR / "2026_qb_rooms.csv")
     if not qb.empty and "team" in qb.columns:
         out = qb[["team"]].copy()

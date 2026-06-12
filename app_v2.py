@@ -359,8 +359,14 @@ with t_team:
     m[1].metric("Power Index", f"{row['power_index_v2']:.1f}")
     m[2].metric("Strength Rank", f"#{int(row['strength_rank'])}" if "strength_rank" in row else "—")
     _qbname = str(row.get("projected_qb", "") or "").strip()
+    _qbstat = str(row.get("qb_status", "") or "").lower()
+    _qbtag = ("🔁 transfer" if "transfer" in _qbstat else
+              "⬆️ stepped up" if "stepped up" in _qbstat else
+              "🆕 new starter" if "limited" in _qbstat else
+              "✅ returning" if "returning" in _qbstat else "")
+    _qbdelta = f"{_qbtag} · score {row.get('qb_score', 50):.0f}" if _qbtag else f"score {row.get('qb_score', 50):.0f}"
     m[3].metric("Projected QB", _qbname if _qbname and _qbname.lower() != "nan" else "—",
-                delta=f"score {row.get('qb_score', 50):.0f}", delta_color="off")
+                delta=_qbdelta, delta_color="off")
     m[4].metric("Off PPG", f"{prow.get('Off_PPG', float('nan')):.1f}" if pd.notna(prow.get('Off_PPG', np.nan)) else "—")
 
     st.write("")
@@ -739,26 +745,52 @@ with t_sched:
 
 # ═══════════════════════════════════════════ Player Stats ══════════════════
 with t_players:
-    # ── Top Returning QBs: ranked by the model's QB score, with 2025 stat line ──
-    st.subheader("Top Returning QBs (2026 projection)")
+    # ── Projected 2026 starting QBs: portal/draft-aware, ranked by QB score ──
+    st.subheader("Projected 2026 Starting QBs")
     qb_cols = [c for c in ["projected_qb", "qb_score", "qb_status"] if c in idx.columns]
     if {"projected_qb", "qb_score"}.issubset(idx.columns):
         qb = idx[["team", "rank_v2"] + qb_cols].copy()
         qb = qb[qb["projected_qb"].astype(str).str.strip().str.lower().ne("nan") & qb["projected_qb"].notna()]
         # Attach each QB's 2025 passing line so it's clear what the score is built on.
+        # Prefer the curated starters file (its stats follow transfers to the new school);
+        # fall back to the raw player-stats pivot keyed on the QB's current team.
         try:
-            _ps = pd.read_csv(RAW / "2025_player_stats.csv")
-            _pa = _ps[_ps["category"].astype(str).str.lower() == "passing"].copy()
-            _pa["stat"] = pd.to_numeric(_pa["stat"], errors="coerce")
-            _pw = _pa.pivot_table(index=["player", "team"], columns="statType", values="stat", aggfunc="first").reset_index()
-            _pw.columns.name = None
-            qb = qb.merge(_pw, left_on=["projected_qb", "team"], right_on=["player", "team"], how="left")
+            _st = pd.read_csv(RAW / "2026_qb_starters.csv")
+            _sm = _st.rename(columns={"qb": "projected_qb", "yds_2025": "YDS", "td_2025": "TD",
+                                      "int_2025": "INT", "pct_2025": "PCT", "ypa_2025": "YPA"})
+            qb = qb.merge(_sm[["team", "projected_qb", "YDS", "TD", "INT", "PCT", "YPA"]],
+                          on=["team", "projected_qb"], how="left")
         except Exception:
-            for c in ["YDS", "TD", "INT", "PCT", "YPA"]:
-                qb[c] = np.nan
+            try:
+                _ps = pd.read_csv(RAW / "2025_player_stats.csv")
+                _pa = _ps[_ps["category"].astype(str).str.lower() == "passing"].copy()
+                _pa["stat"] = pd.to_numeric(_pa["stat"], errors="coerce")
+                _pw = _pa.pivot_table(index=["player", "team"], columns="statType", values="stat", aggfunc="first").reset_index()
+                _pw.columns.name = None
+                qb = qb.merge(_pw, left_on=["projected_qb", "team"], right_on=["player", "team"], how="left")
+            except Exception:
+                for c in ["YDS", "TD", "INT", "PCT", "YPA"]:
+                    qb[c] = np.nan
         qb = qb.sort_values("qb_score", ascending=False)
-        show_cols = ["projected_qb", "team", "qb_score", "YDS", "TD", "INT", "PCT", "YPA"]
-        lead = qb[[c for c in show_cols if c in qb.columns]].head(30).rename(columns={
+
+        def _qb_flag(s):
+            s = str(s or "").lower()
+            if "transfer" in s:
+                return "🔁 Transfer"
+            if "stepped up" in s:
+                return "⬆️ Stepped up"
+            if "limited" in s:
+                return "🆕 New starter"
+            if "returning" in s:
+                return "✅ Returning"
+            return "—"
+        if "qb_status" in qb.columns:
+            qb["Type"] = qb["qb_status"].map(_qb_flag)
+        else:
+            qb["Type"] = "—"
+
+        show_cols = ["projected_qb", "team", "Type", "qb_score", "YDS", "TD", "INT", "PCT", "YPA"]
+        lead = qb[[c for c in show_cols if c in qb.columns]].head(40).rename(columns={
             "projected_qb": "QB", "team": "Team", "qb_score": "QB Score",
             "YDS": "2025 Yds", "TD": "2025 TD", "INT": "2025 INT", "PCT": "Comp %", "YPA": "Yds/Att"})
         for c in ["QB Score", "Comp %", "Yds/Att"]:
@@ -767,8 +799,9 @@ with t_players:
         for c in ["2025 Yds", "2025 TD", "2025 INT"]:
             if c in lead.columns:
                 lead[c] = pd.to_numeric(lead[c], errors="coerce").round(0)
-        st.caption("Each team's projected 2026 starter = its 2025 primary passer (assumes return). Score blends YPA, TD, completion %, INT avoidance, and volume.")
-        st.dataframe(blank_na(lead), use_container_width=True, hide_index=True, height=420)
+        st.caption("Each team's projected 2026 starter, resolved from the transfer portal + 2026 NFL draft departures (not a blanket 'everyone returns' assumption). "
+                   "A transfer's 2025 stats follow them to their new school. Score blends YPA, TD, completion %, INT avoidance, and volume.")
+        st.dataframe(blank_na(lead), use_container_width=True, hide_index=True, height=440)
     st.markdown("---")
 
     st.subheader("Player Stats — last few seasons")
