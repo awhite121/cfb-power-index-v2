@@ -103,7 +103,7 @@ PL=dict(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(10,13,26,.85)",
         font=dict(family="Inter,sans-serif",color="#b0b4c8"),
         title_font=dict(family="Playfair Display,serif",color="#eae7e0",size=17),
         hoverlabel=dict(bgcolor="#161830",bordercolor="#c8aa6e",font_color="#e8e0d0"),
-        margin=dict(l=10,r=10,t=45,b=10))
+        )
 AX=dict(gridcolor="#161a2e",zerolinecolor="#1e2240")
 def sf(f): f.update_xaxes(**AX); f.update_yaxes(**AX); return f
 
