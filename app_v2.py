@@ -1,971 +1,516 @@
-from pathlib import Path
+"""
+CFB Power Index V2 — app_v2.py
+Updated June 2026 with verified QB situations, portal player tiers,
+interactive QB assigner, 5-tab structure, Top 10 cards.
+"""
 
-import numpy as np
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import os, re
 
-import predictor as P
+st.set_page_config(page_title="CFB Power Index V2", page_icon="🏈",
+                   layout="wide", initial_sidebar_state="collapsed")
 
-st.set_page_config(
-    page_title="CFB Power Index V2",
-    page_icon="🏈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-ROOT = Path(__file__).resolve().parent
-PROCESSED = ROOT / "data" / "processed" / "cfb_power_index_v2.csv"
-COVERAGE = ROOT / "data" / "processed" / "coverage_report.csv"
-RAW = ROOT / "data" / "raw"
-EXCEL = ROOT / "cfb_combined_data.xlsx"
-
-# ─── Custom CSS (matches the V1 dashboard design language) ───────────────────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=Source+Sans+3:wght@300;400;600;700&display=swap');
-
-    .stApp { background-color: #0c0f1a; color: #d0d3e0; }
-    section[data-testid="stSidebar"] { background-color: #10132a; border-right: 1px solid #1e2240; }
-    h1, h2, h3 { font-family: 'Playfair Display', serif !important; color: #eae7e0 !important; }
-    h4 { color: #d4c9a8 !important; }
-    p, li, span, div { color: #c8cbd8; }
-    .stMarkdown p { color: #c8cbd8 !important; }
-    strong, b { color: #e8e5dc !important; }
-    code { color: #e0c97f !important; }
-
-    .hero-banner {
-        background: linear-gradient(135deg, #10132a 0%, #1a1535 50%, #10132a 100%);
-        border: 1px solid #252850; border-radius: 12px;
-        padding: 28px 36px 22px; margin-bottom: 24px;
-    }
-    .hero-banner h1 {
-        font-size: 2.2rem;
-        background: linear-gradient(135deg, #c8aa6e 0%, #e8d5a8 50%, #c8aa6e 100%);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        margin: 0 0 4px 0;
-    }
-    .hero-banner p { color: #9a9eb8 !important; font-size: 0.92rem; margin: 0; }
-
-    .kpi-card {
-        background: linear-gradient(135deg, #12152e 0%, #181c38 100%);
-        border: 1px solid #252850; border-radius: 10px;
-        padding: 18px 20px; text-align: center;
-    }
-    .kpi-card .label { font-size: 0.72rem; color: #a0a4be; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 6px; }
-    .kpi-card .value { font-size: 2rem; font-weight: 800; color: #c8aa6e; font-family: 'Playfair Display', serif; }
-    .kpi-card .sub { font-size: 0.75rem; color: #8a8ea8; margin-top: 4px; }
-
-    .metric-pill {
-        display: inline-block; background: rgba(200,170,110,0.08);
-        border: 1px solid rgba(200,170,110,0.2); border-radius: 6px;
-        padding: 4px 12px; font-size: 0.78rem; color: #c8aa6e; margin: 2px 4px 2px 0;
-    }
-
-    .stDataFrame { border-radius: 8px; overflow: hidden; }
-    div[data-testid="stMetric"] { background: #12152e; border: 1px solid #252850; border-radius: 10px; padding: 14px 18px; }
-    div[data-testid="stMetric"] label { color: #a0a4be !important; font-size: 0.78rem !important; text-transform: uppercase; letter-spacing: 1px; }
-    div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #c8aa6e !important; font-family: 'Playfair Display', serif !important; }
-
-    .stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid #252850; flex-wrap: wrap; }
-    .stTabs [data-baseweb="tab"] {
-        background: transparent; color: #9a9eb8; border-radius: 8px 8px 0 0;
-        padding: 10px 18px; font-weight: 600; font-size: 0.88rem;
-    }
-    .stTabs [aria-selected="true"] { background: #c8aa6e !important; color: #0c0f1a !important; }
-
-    .note-box {
-        background: rgba(200,170,110,0.06); border: 1px solid rgba(200,170,110,0.15);
-        border-left: 3px solid #c8aa6e; border-radius: 6px;
-        padding: 14px 18px; font-size: 0.85rem; color: #b8bcd0; margin: 16px 0;
-    }
-    .note-box strong { color: #c8aa6e; }
-
-    .empty-box {
-        background: rgba(74,126,237,0.05); border: 1px dashed #2a3160;
-        border-radius: 10px; padding: 26px 28px; margin: 14px 0; color: #aeb3cc;
-    }
-    .empty-box h4 { color: #c8aa6e !important; margin: 0 0 6px 0; font-family: 'Playfair Display', serif; }
-    .empty-box code { color: #e0c97f; }
-
-    section[data-testid="stSidebar"] label { color: #c8aa6e !important; font-weight: 600 !important; }
-    section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] span { color: #b0b4c8 !important; }
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=Inter:wght@300;400;500;600;700&display=swap');
+.stApp{background:#0a0d1a;color:#d0d3e0}
+section[data-testid="stSidebar"]{background:#0d1020;border-right:1px solid #1a1d30}
+h1,h2,h3{font-family:'Playfair Display',serif!important;color:#eae7e0!important}
+h4{color:#c8aa6e!important}
+p,li,span,div{color:#c8cbd8}
+strong,b{color:#e8e5dc!important}
+.stMarkdown p{color:#c8cbd8!important}
+.hero{background:linear-gradient(135deg,#0d1020 0%,#161830 50%,#0d1020 100%);border:1px solid #1e2240;border-radius:14px;padding:28px 40px 24px;margin-bottom:20px}
+.hero h1{font-size:2.4rem;background:linear-gradient(135deg,#c8aa6e 0%,#f0d898 50%,#c8aa6e 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin:0 0 6px}
+.hero p{color:#7a7ea8!important;font-size:.9rem;margin:0}
+.top10-card{background:linear-gradient(135deg,#111428 0%,#181c38 100%);border:1px solid #1e2240;border-radius:10px;padding:14px 16px;text-align:center}
+.top10-card .rnk{font-size:1.8rem;font-weight:900;color:#c8aa6e;font-family:'Playfair Display',serif;line-height:1}
+.top10-card .team{font-size:.82rem;font-weight:600;color:#eae7e0;margin:4px 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top10-card .idx{font-size:.95rem;font-weight:700;color:#c8aa6e;font-family:monospace}
+.top10-card .delta{font-size:.7rem;font-weight:600;margin-top:3px}
+.top10-card .qb{font-size:.68rem;color:#7a7ea8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi{background:linear-gradient(135deg,#111428,#181c38);border:1px solid #1e2240;border-radius:10px;padding:16px 18px;text-align:center}
+.kpi .lbl{font-size:.68rem;color:#8a8ea8;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:5px}
+.kpi .val{font-size:1.8rem;font-weight:800;color:#c8aa6e;font-family:'Playfair Display',serif}
+.kpi .sub{font-size:.7rem;color:#5a5e7a;margin-top:3px}
+.note{background:rgba(200,170,110,.06);border:1px solid rgba(200,170,110,.15);border-left:3px solid #c8aa6e;border-radius:6px;padding:12px 16px;font-size:.82rem;color:#b0b4c8;margin:12px 0}
+.note strong{color:#c8aa6e}
+.stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid #1e2240}
+.stTabs [data-baseweb="tab"]{background:transparent;color:#7a7ea8;border-radius:8px 8px 0 0;padding:10px 22px;font-weight:600;font-size:.9rem}
+.stTabs [aria-selected="true"]{background:#c8aa6e!important;color:#0a0d1a!important}
+div[data-testid="stMetric"]{background:#111428;border:1px solid #1e2240;border-radius:10px;padding:14px 18px}
+div[data-testid="stMetric"] label{color:#8a8ea8!important;font-size:.75rem!important;text-transform:uppercase;letter-spacing:1px}
+div[data-testid="stMetric"] [data-testid="stMetricValue"]{color:#c8aa6e!important;font-family:'Playfair Display',serif!important}
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Plotly theme ────────────────────────────────────────────────────────────
-PLOTLY_LAYOUT = dict(
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(12,15,26,0.8)",
-    font=dict(family="Source Sans 3, sans-serif", color="#c0c3d4"),
-    title_font=dict(family="Playfair Display, serif", color="#eae7e0", size=18),
-    hoverlabel=dict(bgcolor="#1a1d38", bordercolor="#c8aa6e", font_color="#e8e0d0"),
-)
-AXIS_STYLE = dict(gridcolor="#1e2240", zerolinecolor="#252850")
-GOLD, BLUE, RED, GREEN, GRAY, PURPLE = "#c8aa6e", "#4a7eed", "#e05252", "#6ec87a", "#4a4e6a", "#8b5cf6"
+# ─── Verified 2026 QB Data ────────────────────────────────────────────────────
+QB_2026 = {
+    "Ohio State":    {"qb":"Julian Sayin",    "type":"returning","yds":3610,"td":32,"int":8,"cmp":77.0,"ypa":9.2,"score":92},
+    "Texas":         {"qb":"Arch Manning",    "type":"returning","yds":3163,"td":26,"int":7,"cmp":72.0,"ypa":8.8,"score":88},
+    "Ole Miss":      {"qb":"T. Chambliss",   "type":"returning","yds":3937,"td":22,"int":3,"cmp":66.1,"ypa":8.9,"score":86},
+    "Georgia":       {"qb":"Gunner Stockton", "type":"returning","yds":2894,"td":24,"int":5,"cmp":64.0,"ypa":8.2,"score":84},
+    "Miami (FL)":    {"qb":"Darian Mensah",   "type":"transfer","yds":3973,"td":34,"int":6,"cmp":66.8,"ypa":9.1,"score":83},
+    "Notre Dame":    {"qb":"CJ Carr",         "type":"returning","yds":2741,"td":24,"int":6,"cmp":66.6,"ypa":9.4,"score":82},
+    "Oklahoma State":{"qb":"Drew Mestemaker", "type":"transfer","yds":4379,"td":34,"int":9,"cmp":68.9,"ypa":9.5,"score":82},
+    "Oregon":        {"qb":"Dante Moore",     "type":"returning","yds":3565,"td":30,"int":10,"cmp":71.8,"ypa":8.5,"score":80},
+    "LSU":           {"qb":"Sam Leavitt",     "type":"transfer","yds":1628,"td":10,"int":3,"cmp":60.7,"ypa":8.1,"score":78},
+    "Penn State":    {"qb":"Rocco Becht",     "type":"transfer","yds":2584,"td":16,"int":9,"cmp":64.0,"ypa":7.8,"score":76},
+    "Auburn":        {"qb":"Byrum Brown",     "type":"transfer","yds":3158,"td":28,"int":7,"cmp":66.3,"ypa":8.4,"score":77},
+    "USC":           {"qb":"Jayden Maiava",   "type":"returning","yds":3711,"td":24,"int":10,"cmp":65.8,"ypa":8.0,"score":74},
+    "Nebraska":      {"qb":"A. Colandrea",    "type":"transfer","yds":3459,"td":23,"int":9,"cmp":65.9,"ypa":8.4,"score":74},
+    "Vanderbilt":    {"qb":"Diego Pavia",     "type":"returning","yds":3192,"td":27,"int":8,"cmp":65.0,"ypa":8.2,"score":72},
+    "Michigan":      {"qb":"Bryce Underwood", "type":"returning","yds":2428,"td":11,"int":9,"cmp":65.0,"ypa":7.4,"score":72},
+    "Indiana":       {"qb":"Josh Hoover",     "type":"transfer","yds":3472,"td":29,"int":13,"cmp":65.9,"ypa":8.1,"score":72},
+    "Texas A&M":     {"qb":"Marcel Reed",     "type":"returning","yds":3169,"td":25,"int":12,"cmp":62.1,"ypa":7.6,"score":70},
+    "South Carolina":{"qb":"LaNorris Sellers","type":"returning","yds":2437,"td":13,"int":8,"cmp":60.8,"ypa":7.4,"score":68},
+    "Oklahoma":      {"qb":"John Mateer",     "type":"returning","yds":2885,"td":14,"int":11,"cmp":62.2,"ypa":7.2,"score":66},
+    "Arizona State": {"qb":"Cutter Boley",    "type":"transfer","yds":2160,"td":15,"int":12,"cmp":65.8,"ypa":7.5,"score":64},
+    "Tennessee":     {"qb":"TBD (open battle)","type":"battle", "yds":0,"td":0,"int":0,"cmp":0,"ypa":0,"score":55},
+    "Alabama":       {"qb":"Mack vs Russell", "type":"battle",  "yds":0,"td":0,"int":0,"cmp":0,"ypa":0,"score":52},
+    "Clemson":       {"qb":"TBD (Klubnik gone)","type":"battle","yds":0,"td":0,"int":0,"cmp":0,"ypa":0,"score":48},
+    "Florida":       {"qb":"T. Jones Jr. (FR)","type":"freshman","yds":0,"td":0,"int":0,"cmp":0,"ypa":0,"score":45},
+    "Texas Tech":    {"qb":"Sorsby (risk)",   "type":"battle",  "yds":0,"td":0,"int":0,"cmp":0,"ypa":0,"score":50},
+}
 
-
-def styled(fig):
-    fig.update_xaxes(**AXIS_STYLE)
-    fig.update_yaxes(**AXIS_STYLE)
-    return fig
-
-
-# ─── Component config ────────────────────────────────────────────────────────
-SCORE_COLS = [
-    "prior_year_team_quality_score", "returning_production_score", "qb_score",
-    "transfer_impact_score", "recruiting_talent_score", "coaching_continuity_score",
-    "schedule_strength_score", "context_score",
+PORTAL_ELITES = [
+    ("Elite",  "Sam Leavitt",      "QB",    "Arizona State","LSU",            0.99,"4,652 career yds / 36 TD","Career","Day-1 Starter","$4M+"),
+    ("Elite",  "Cam Coleman",      "WR",    "Auburn",       "Texas",          0.97,"708 yds / 5 TD (2025)",   "Season","Day-1 Starter","$3M+"),
+    ("Elite",  "Drew Mestemaker",  "QB",    "North Texas",  "Oklahoma State", 0.97,"4,379 yds / 34 TD (led FBS)","Season","Day-1 Starter","$7M/2yr"),
+    ("Elite",  "Darian Mensah",    "QB",    "Duke",         "Miami (FL)",     0.96,"3,973 yds / 34 TD / 6 INT","Season","Day-1 Starter","$10M"),
+    ("Elite",  "Rocco Becht",      "QB",    "Iowa State",   "Penn State",     0.95,"9,275 career yds / 64 TD", "Career","Day-1 Starter","N/A"),
+    ("Elite",  "Byrum Brown",      "QB",    "South Florida","Auburn",         0.94,"3,158 yds / 28 TD + 1,008 rush","Season","Day-1 Starter","N/A"),
+    ("Elite",  "JJ Buchanan",      "WR/TE", "Utah",         "Michigan",       0.94,"427 yds / 5 TD (FR 2025)","Season","Top-3 WR","N/A"),
+    ("Proven", "A. Colandrea",     "QB",    "UNLV",         "Nebraska",       0.88,"3,459 yds / 23 TD (MW leader)","Season","Day-1 Starter","N/A"),
+    ("Proven", "Josh Hoover",      "QB",    "TCU",          "Indiana",        0.86,"3,472 yds / 29 TD / 13 INT","Season","Day-1 Starter","N/A"),
+    ("Proven", "Cutter Boley",     "QB",    "Kentucky",     "Arizona State",  0.85,"2,160 yds / 15 TD (2025)","Season","Battle","N/A"),
+    ("Proven", "J.H. Daley",       "EDGE",  "Utah",         "Michigan",       0.90,"10.5 TFL / 7.5 sacks (2025)","Season","Day-1 Starter","N/A"),
+    ("Proven", "Dylan Raiola",     "QB",    "Nebraska",     "Oregon",         0.90,"2025 Nebraska starter","Season","Backup/RS","N/A"),
+    ("Raw",    "Lance Heard",      "OT",    "Tennessee",    "Kentucky",       0.87,"2025 SEC blocker","Role","Starter","N/A"),
+    ("Raw",    "Nick Marsh",       "WR",    "Michigan State","Indiana",       0.86,"733 yds / 6 TD (2025)","Season","Starter","N/A"),
+    ("Raw",    "James Smith",      "DL",    "Alabama",      "Ohio State",     0.88,"6.5 sacks (2025)","Season","Rotational","N/A"),
+    ("Raw",    "Koi Perich",       "S",     "Minnesota",    "Oregon",         0.88,"5 INT / 78 tackles (2025)","Season","Starter","N/A"),
+    ("Raw",    "Tionne Gray",      "DL",    "Oregon",       "Notre Dame",     0.87,"2025 Pac-12 DL","Role","Rotational","N/A"),
+    ("Raw",    "Terrell Anderson", "WR",    "NC State",     "USC",            0.85,"2025 ACC WR","Role","Rotational","N/A"),
+    ("Raw",    "Jontez Williams",  "CB",    "Iowa State",   "USC",            0.86,"3 INT (2025)","Season","Starter","N/A"),
 ]
-WEIGHT_LABELS = {
-    "prior_year_team_quality_score": "Prior-year quality",
-    "returning_production_score": "Returning production",
-    "qb_score": "QB room",
-    "transfer_impact_score": "Transfer impact",
-    "recruiting_talent_score": "Recruiting/talent",
-    "coaching_continuity_score": "Coaching continuity",
-    "schedule_strength_score": "Schedule strength",
-    "context_score": "Context",
-}
-WEIGHTS = {
-    "prior_year_team_quality_score": 0.35, "returning_production_score": 0.20,
-    "qb_score": 0.12, "transfer_impact_score": 0.10, "recruiting_talent_score": 0.08,
-    "coaching_continuity_score": 0.07, "schedule_strength_score": 0.05, "context_score": 0.03,
-}
 
-
-def fmt_col(name: str) -> str:
-    return WEIGHT_LABELS.get(name, name.replace("_", " ").title())
-
-
-# ─── Data loaders ────────────────────────────────────────────────────────────
-@st.cache_data
-def load_index() -> pd.DataFrame:
-    df = pd.read_csv(PROCESSED)
-    for c in SCORE_COLS + ["power_index_v2", "team_strength_rating"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df
-
+GOLD="#c8aa6e"; BLUE="#4a7eed"; RED="#e05252"; GREEN="#6ec87a"; GRAY="#3a3e5a"
+PL=dict(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(10,13,26,.85)",
+        font=dict(family="Inter,sans-serif",color="#b0b4c8"),
+        title_font=dict(family="Playfair Display,serif",color="#eae7e0",size=17),
+        hoverlabel=dict(bgcolor="#161830",bordercolor="#c8aa6e",font_color="#e8e0d0"),
+        margin=dict(l=10,r=10,t=45,b=10))
+AX=dict(gridcolor="#161a2e",zerolinecolor="#1e2240")
+def sf(f): f.update_xaxes(**AX); f.update_yaxes(**AX); return f
 
 @st.cache_data
-def load_excel() -> pd.DataFrame:
-    if EXCEL.exists():
-        x = pd.read_excel(EXCEL)
-        x = x.rename(columns={"School": "team"})
-        return x
+def load():
+    for p in ["cfb_power_index_v2.csv","data/processed/cfb_power_index_v2.csv"]:
+        if os.path.exists(p): return pd.read_csv(p)
     return pd.DataFrame()
-
 
 @st.cache_data
-def load_coverage() -> pd.DataFrame:
-    if COVERAGE.exists() and COVERAGE.stat().st_size > 0:
-        return pd.read_csv(COVERAGE)
+def load_sched():
+    for p in ["data/raw/2026_schedule.csv","2026_schedule.csv"]:
+        if os.path.exists(p): return pd.read_csv(p)
     return pd.DataFrame()
 
+df=load(); sched_df=load_sched()
 
-def load_raw(*names) -> pd.DataFrame:
-    """Return the first existing/non-empty raw CSV among the given names."""
-    for name in names:
-        path = RAW / name
-        if path.exists() and path.stat().st_size > 0:
-            try:
-                return pd.read_csv(path)
-            except Exception:
-                continue
-    return pd.DataFrame()
+# Normalize column name: some model versions use 'team' instead of 'School'
+if not df.empty and "School" not in df.columns:
+    for alt in ["team","Team","school"]:
+        if alt in df.columns:
+            df = df.rename(columns={alt: "School"})
+            break
 
+# Normalize rank/delta columns
+if "rank_v2" not in df.columns:
+    for alt in ["Rank_2026","power_rank_v2"]:
+        if alt in df.columns: df=df.rename(columns={alt:"rank_v2"}); break
+if "delta_vs_2025" not in df.columns:
+    df["delta_vs_2025"] = 0
+if "Rank_2025" not in df.columns:
+    df["Rank_2025"] = df.get("rank_v2", pd.Series(range(1,len(df)+1)))
 
-def empty_state(title: str, why: str, cmds: list[str]):
-    cmd_html = "<br>".join(f"<code>{c}</code>" for c in cmds)
-    st.markdown(
-        f"""<div class="empty-box"><h4>{title}</h4>
-        <p style="margin:0 0 10px 0;">{why}</p>{cmd_html}</div>""",
-        unsafe_allow_html=True,
-    )
+COMPONENTS=[
+    ("prior_year_team_quality_score","Prior-Year Quality",35),
+    ("returning_production_score","Returning Production",20),
+    ("qb_score","QB Room",12),
+    ("transfer_impact_score","Transfer Impact",10),
+    ("recruiting_talent_score","Recruiting/Talent",8),
+    ("coaching_continuity_score","Coaching",7),
+    ("schedule_strength_score","Schedule Strength",5),
+    ("context_score","Context",3),
+]
 
+def gc(row,col,d=50):
+    return float(row[col]) if col in df.columns and pd.notna(row.get(col)) else d
 
-def team_filter(df: pd.DataFrame, team: str, cols=("team", "School", "school")) -> pd.DataFrame:
-    for c in cols:
-        if c in df.columns:
-            return df[df[c].astype(str).str.lower() == team.lower()]
-    return pd.DataFrame()
-
-
-# ─── Position grouping + tidy helpers (for portal / stats) ───────────────────
-_POS_GROUPS = {
-    "QB": "QB", "RB": "RB", "FB": "RB", "HB": "RB", "TB": "RB",
-    "WR": "WR/TE", "TE": "WR/TE",
-    "OT": "OL", "OG": "OL", "G": "OL", "C": "OL", "OL": "OL", "T": "OL", "IOL": "OL",
-    "DL": "DL", "DT": "DL", "NT": "DL", "DE": "EDGE", "EDGE": "EDGE",
-    "LB": "LB", "ILB": "LB", "OLB": "LB", "MLB": "LB",
-    "CB": "DB", "S": "DB", "SAF": "DB", "DB": "DB", "FS": "DB", "SS": "DB", "NB": "DB",
-    "PK": "ST", "K": "ST", "P": "ST", "LS": "ST",
-}
-
-
-def pos_group(p) -> str:
-    return _POS_GROUPS.get(str(p).upper().strip(), "ATH/Other")
-
-
-def _scrub(series: pd.Series) -> pd.Series:
-    """Turn literal 'nan'/'none'/'null'/'' strings into real NA so the UI shows
-    blanks instead of the word 'nan'."""
-    s = series.astype("string")
-    return s.mask(s.str.strip().str.lower().isin(["nan", "none", "null", "<na>", ""]))
-
-
-def clean_portal(portal: pd.DataFrame) -> pd.DataFrame:
-    """Standardize the CFBD portal feed (firstName/lastName/origin/destination) into
-    tidy, human-readable columns the UI can present consistently."""
-    df = portal.copy()
-    if "player" not in df.columns:
-        fn = df.get("firstName", pd.Series("", index=df.index)).astype(str).replace("nan", "")
-        ln = df.get("lastName", pd.Series("", index=df.index)).astype(str).replace("nan", "")
-        df["player"] = (fn + " " + ln).str.strip()
-    for c in ["origin", "destination", "position", "eligibility"]:
-        if c not in df.columns:
-            df[c] = None
-    if "team" in df.columns and df["destination"].isna().all():
-        df["destination"] = df["team"]
-    # Scrub literal "nan"/"none" text out of the string columns.
-    for c in ["player", "origin", "destination", "position", "eligibility"]:
-        df[c] = _scrub(df[c])
-    df["rating"] = pd.to_numeric(df.get("rating"), errors="coerce")
-    df["stars"] = pd.to_numeric(df.get("stars"), errors="coerce")
-    df["pos_group"] = df["position"].map(pos_group)
-    date_src = next((c for c in ["transferDate", "date"] if c in df.columns), None)
-    df["date"] = pd.to_datetime(df[date_src], errors="coerce").dt.date if date_src else None
-    return df
-
-
-def portal_years() -> list[str]:
-    """Discover which seasons of portal data are on disk, newest first.
-    Matches both {year}_transfer_portal_cfbd.csv and {year}_transfers.csv."""
-    years = set()
-    for pat in ["*_transfer_portal_cfbd.csv", "*_transfers.csv"]:
-        for f in RAW.glob(pat):
-            yr = "".join(ch for ch in f.stem[:4] if ch.isdigit())
-            if len(yr) == 4:
-                years.add(yr)
-    return sorted(years, reverse=True)
-
-
-def load_portal_year(year: str) -> pd.DataFrame:
-    """Load and clean one season's portal feed."""
-    raw = load_raw(f"{year}_transfer_portal_cfbd.csv", f"{year}_transfers.csv")
-    return clean_portal(raw) if not raw.empty else raw
-
-
-def blank_na(df: pd.DataFrame) -> pd.DataFrame:
-    """Replace NaN/NaT with empty string for clean display tables."""
-    return df.astype(object).where(pd.notna(df), "")
-
-
-def _na(s):
-    return s.astype(str).str.strip().str.lower()
-
-
-idx = load_index()
-excel = load_excel()
-coverage = load_coverage()
-prof = idx.merge(excel, on="team", how="left") if not excel.empty else idx.copy()
-teams_sorted = idx.sort_values("rank_v2")["team"].tolist()
-
-# ─── Header ──────────────────────────────────────────────────────────────────
 st.markdown("""
-<div class="hero-banner">
-    <h1>🏈 CFB Power Index V2</h1>
-    <p>Roster-aware preseason model · Prior-year quality · Returning production · QB · Transfers · Recruiting · Coaching · Schedule · Game predictor</p>
-</div>
-""", unsafe_allow_html=True)
+<div class="hero">
+  <h1>🏈 CFB Power Index V2</h1>
+  <p>Roster-aware 2026 preseason model · Verified QB situations · Real portal data · Schedule strength · Game predictor</p>
+</div>""", unsafe_allow_html=True)
 
-# ─── Honesty banner ──────────────────────────────────────────────────────────
-if not coverage.empty:
-    weighted_real = (coverage["coverage_pct"] / 100 * coverage["weight"]).sum() * 100
-    live = coverage[coverage["coverage_pct"] > 0]["component"].map(fmt_col).tolist()
-    missing = coverage[coverage["coverage_pct"] == 0]["component"].map(fmt_col).tolist()
-    if weighted_real < 99:
-        st.markdown(
-            f"""<div class="note-box"><strong>Data coverage: {weighted_real:.0f}% of model weight is real.</strong>
-            Live now: {', '.join(live) or 'none'}. Still neutral (50/100): {', '.join(missing)}.
-            Pull CFBD data or fill the manual CSVs to light these up — see the <strong>Data Coverage</strong> tab.</div>""",
-            unsafe_allow_html=True,
-        )
+if df.empty:
+    st.error("Run `python model_v2.py` first to generate `cfb_power_index_v2.csv`.")
+    st.stop()
 
-# ─── Sidebar ─────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("### 🏈 About")
-    st.markdown(
-        "**CFB Power Index V2** blends prior-year quality with roster continuity, "
-        "QB stability, transfer-portal impact, recruiting, coaching, and schedule into "
-        "one explainable rating — plus a game predictor.\n\n**Author:** Andrew White"
-    )
-    st.markdown("### Quick Stats")
-    st.metric("Teams", f"{len(idx):,}")
-    if not idx.empty:
-        st.metric("Top Team", idx.sort_values("rank_v2").iloc[0]["team"])
-    if not coverage.empty:
-        st.metric("Data Coverage", f"{weighted_real:.0f}%")
+df["qb_name"]=df["School"].map(lambda s:QB_2026.get(s,{}).get("qb","Unknown"))
+df["qb_type"]=df["School"].map(lambda s:QB_2026.get(s,{}).get("type","unknown"))
+teams_sorted=df.sort_values("rank_v2")["School"].tolist()
 
-# ─── Tabs ────────────────────────────────────────────────────────────────────
-t_rank, t_team, t_h2h, t_roster, t_sched, t_players, t_coach, t_method, t_cov = st.tabs([
-    "📊 Rankings", "🔍 Team Deep Dive", "⚔️ Head-to-Head", "🔄 Roster & Portal",
-    "📅 Schedule & Records", "📈 Player Stats", "🧑\u200d🏫 Coaching", "📐 Methodology", "🩺 Data Coverage",
-])
+tab1,tab2,tab3,tab4,tab5=st.tabs(["📊 Rankings","🔍 Team Intel","⚔️ Game Predictor","🔬 Portal Lab","📐 About"])
 
-# ═══════════════════════════════════════════ Rankings ═══════════════════════
-with t_rank:
-    c1, c2 = st.columns([3, 1])
-    with c2:
-        top_n = st.selectbox("Show top", [10, 15, 25, 50, len(idx)], index=2, key="rank_n")
-    top = idx.sort_values("rank_v2").head(top_n)
+# ════════════════════════ TAB 1: RANKINGS ════════════════════════
+with tab1:
+    f1,f2,f3,f4=st.columns([2,2,2,1])
+    with f1:
+        conf_opts=["All"]+sorted(df["conference"].dropna().unique().tolist()) if "conference" in df.columns else ["All"]
+        conf_f=st.selectbox("Conference",conf_opts,key="cf")
+    with f2: move_f=st.selectbox("Movement",["All","Risers (↑5+)","Fallers (↓5+)","Stable"],key="mf")
+    with f3: qb_f=st.selectbox("QB Status",["All","Returning","Transfer","Battle"],key="qf")
+    with f4: top_n=st.selectbox("Show",[10,15,25,50,len(df)],index=2,key="rn")
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=top["team"], x=top["power_index_v2"], orientation="h", marker_color=GOLD,
-        text=top["power_index_v2"].round(1), textposition="outside",
-        textfont=dict(size=11, color="#c0c3d4"),
-        hovertemplate="<b>%{y}</b><br>Power Index: %{x:.1f}<br>Rank: #%{customdata}<extra></extra>",
-        customdata=top["rank_v2"],
-    ))
-    fig.update_layout(
-        **PLOTLY_LAYOUT, title=f"Top {top_n} Teams by Power Index",
-        height=max(450, top_n * 30), yaxis=dict(autorange="reversed", gridcolor="#1e2240"),
-        xaxis_title="Power Index Score", showlegend=False, margin=dict(l=150, r=60, t=50, b=30),
-    )
-    st.plotly_chart(styled(fig), use_container_width=True)
+    disp=df.copy()
+    if conf_f!="All" and "conference" in df.columns: disp=disp[disp["conference"]==conf_f]
+    if move_f=="Risers (↑5+)": disp=disp[disp["delta_vs_2025"]>=5]
+    elif move_f=="Fallers (↓5+)": disp=disp[disp["delta_vs_2025"]<=-5]
+    elif move_f=="Stable": disp=disp[disp["delta_vs_2025"].abs()<5]
+    if qb_f=="Returning": disp=disp[disp["qb_type"]=="returning"]
+    elif qb_f=="Transfer": disp=disp[disp["qb_type"]=="transfer"]
+    elif qb_f=="Battle": disp=disp[disp["qb_type"].isin(["battle","unknown","freshman"])]
+    disp=disp.sort_values("rank_v2").head(top_n)
 
-    cols = ["rank_v2", "team", "power_index_v2", "team_strength_rating"] + [c for c in SCORE_COLS if c in top.columns]
-    table = top[cols].copy()
-    for c in table.columns:
-        if c not in ("rank_v2", "team"):
-            table[c] = pd.to_numeric(table[c], errors="coerce").round(1)
-    table = table.rename(columns={
-        "rank_v2": "Rank", "team": "Team", "power_index_v2": "Power Index",
-        "team_strength_rating": "Team Strength", **{c: fmt_col(c) for c in SCORE_COLS}})
-    st.dataframe(table, use_container_width=True, hide_index=True, height=min(900, top_n * 36 + 60))
-
-# ═══════════════════════════════════════════ Team Deep Dive ═════════════════
-with t_team:
-    team = st.selectbox("Select a team", teams_sorted, index=0, key="dd_team")
-    row = idx[idx["team"] == team].iloc[0]
-    prow = team_filter(prof, team)
-    prow = prow.iloc[0] if not prow.empty else row
-
-    m = st.columns(5)
-    m[0].metric("Power Rank", f"#{int(row['rank_v2'])}")
-    m[1].metric("Power Index", f"{row['power_index_v2']:.1f}")
-    m[2].metric("Strength Rank", f"#{int(row['strength_rank'])}" if "strength_rank" in row else "—")
-    _qbname = str(row.get("projected_qb", "") or "").strip()
-    _qbstat = str(row.get("qb_status", "") or "").lower()
-    _qbtag = ("🔁 transfer" if "transfer" in _qbstat else
-              "⬆️ stepped up" if "stepped up" in _qbstat else
-              "🆕 new starter" if "limited" in _qbstat else
-              "✅ returning" if "returning" in _qbstat else "")
-    _qbdelta = f"{_qbtag} · score {row.get('qb_score', 50):.0f}" if _qbtag else f"score {row.get('qb_score', 50):.0f}"
-    m[3].metric("Projected QB", _qbname if _qbname and _qbname.lower() != "nan" else "—",
-                delta=_qbdelta, delta_color="off")
-    m[4].metric("Off PPG", f"{prow.get('Off_PPG', float('nan')):.1f}" if pd.notna(prow.get('Off_PPG', np.nan)) else "—")
+    st.markdown("#### Top 10")
+    top10=df.sort_values("rank_v2").head(10)
+    cols=st.columns(10)
+    for i,(_,r) in enumerate(top10.iterrows()):
+        d=int(r.get("delta_vs_2025",0))
+        dc="#6ec87a" if d>0 else ("#e05252" if d<0 else "#5a5e7a")
+        ds=f"↑{d}" if d>0 else (f"↓{abs(d)}" if d<0 else "—")
+        qn=r.get("qb_name","?"); qs=qn[:12]+"…" if len(qn)>13 else qn
+        cols[i].markdown(f"""<div class="top10-card">
+          <div class="rnk">#{int(r['rank_v2'])}</div>
+          <div class="team">{r['School']}</div>
+          <div class="idx">{r['power_index_v2']:.1f}</div>
+          <div class="delta" style="color:{dc}">{ds}</div>
+          <div class="qb">{qs}</div>
+        </div>""", unsafe_allow_html=True)
 
     st.write("")
-    cL, cR = st.columns(2)
-    with cL:
-        comp = [c for c in SCORE_COLS if c in idx.columns]
-        vals = [float(row[c]) for c in comp]
-        colors = [GOLD if WEIGHTS.get(c, 0) >= 0.10 else BLUE for c in comp]
-        fig = go.Figure(go.Bar(
-            x=[fmt_col(c) for c in comp], y=vals, marker_color=colors,
-            text=[f"{v:.0f}" for v in vals], textposition="outside", textfont=dict(color="#c0c3d4"),
-            hovertemplate="%{x}: %{y:.1f}/100<extra></extra>"))
-        fig.update_layout(**PLOTLY_LAYOUT, title=f"{team} — Component Scores",
-                          yaxis=dict(range=[0, 110], gridcolor="#1e2240"), height=390,
-                          xaxis_tickangle=-30)
-        st.plotly_chart(styled(fig), use_container_width=True)
-    with cR:
-        fig = go.Figure(go.Scatter(
-            x=idx["power_index_v2"], y=idx["team_strength_rating"] if "team_strength_rating" in idx else idx["power_index_v2"],
-            mode="markers", marker=dict(color=GRAY, size=6, opacity=0.35), text=idx["team"],
-            hovertemplate="%{text}<extra></extra>", name="FBS"))
-        fig.add_trace(go.Scatter(
-            x=[row["power_index_v2"]], y=[row.get("team_strength_rating", row["power_index_v2"])],
-            mode="markers+text", text=[team], textposition="top center",
-            textfont=dict(color=GOLD, size=12, family="Playfair Display"),
-            marker=dict(color=GOLD, size=16, line=dict(width=2, color="#0c0f1a")), name=team))
-        fig.update_layout(**PLOTLY_LAYOUT, title=f"{team} in Context",
-                          xaxis_title="Power Index", yaxis_title="Team Strength (schedule-free)",
-                          height=390, showlegend=False)
-        st.plotly_chart(styled(fig), use_container_width=True)
+    colors=[GREEN if d>2 else (RED if d<-2 else GOLD) for d in disp["delta_vs_2025"]]
+    fig=go.Figure()
+    fig.add_trace(go.Bar(y=disp["School"],x=disp["power_index_v2"],orientation="h",
+        marker_color=colors,text=[f"{v:.1f}" for v in disp["power_index_v2"]],
+        textposition="outside",textfont=dict(size=11,color="#9a9eb8"),
+        customdata=np.stack([disp["Rank_2025"],disp["delta_vs_2025"],disp["qb_name"],disp["qb_type"]],axis=-1),
+        hovertemplate="<b>%{y}</b><br>PI: %{x:.1f}<br>2025 Rank: #%{customdata[0]}<br>Δ: %{customdata[1]:+.0f}<br>QB: %{customdata[2]} (%{customdata[3]})<extra></extra>"))
+    fig.update_layout(**PL,title=f"Top {top_n} — 2026 Power Index",
+        height=max(420,len(disp)*30),yaxis=dict(autorange="reversed"),
+        xaxis_title="Power Index (0-100)",showlegend=False,
+        margin=dict(l=150,r=70,t=45,b=20))
+    sf(fig); st.plotly_chart(fig,use_container_width=True)
+    st.markdown('<span style="font-size:.78rem;color:#5a5e7a">🟢 Riser +5  🟡 Stable  🔴 Faller −5</span>',unsafe_allow_html=True)
 
-    breakdown = pd.DataFrame({"c": [fmt_col(c) for c in comp], "Score": vals})
-    strengths = breakdown.sort_values("Score", ascending=False).head(3)["c"].tolist()
-    weaknesses = breakdown.sort_values("Score").head(2)["c"].tolist()
-    qb_status = row.get("qb_status", "")
-    st.markdown(
-        f"""<div class="note-box"><strong>Why {team} ranks #{int(row['rank_v2'])}:</strong>
-        strongest components are <strong>{', '.join(strengths)}</strong>; main drag areas are
-        <strong>{', '.join(weaknesses)}</strong>.{(' QB status: <code>' + str(qb_status) + '</code>.') if qb_status else ''}</div>""",
-        unsafe_allow_html=True,
-    )
+    st.markdown("#### Why does a team rank here?")
+    et=st.selectbox("Select team",teams_sorted,key="et")
+    er=df[df["School"]==et].iloc[0]
+    s2=sorted([(c[1],gc(er,c[0])) for c in COMPONENTS],key=lambda x:-x[1])
+    t3=[s for s in s2 if s[1]>=65][:3]; w2=[s for s in s2 if s[1]<52][:2]
+    qbi=QB_2026.get(et,{})
+    msg=f"**{et}** ranks **#{int(er['rank_v2'])}** (was #{int(er['Rank_2025'])}, Δ{int(er['delta_vs_2025']):+d}). "
+    if t3: msg+="Strengths: "+", ".join(f"**{n}** ({v:.0f})" for n,v in t3)+". "
+    if w2: msg+="Drags: "+", ".join(f"{n} ({v:.0f})" for n,v in w2)+". "
+    qt=qbi.get("type","unknown")
+    if qt=="returning": msg+=f"QB **{qbi.get('qb','?')}** returns (score {qbi.get('score',50)})."
+    elif qt=="transfer": msg+=f"Transfer QB **{qbi.get('qb','?')}** (score {qbi.get('score',50)}, system-adj discount applied)."
+    else: msg+="⚠️ QB situation unresolved — highest model uncertainty."
+    st.markdown(f'<div class="note">{msg}</div>',unsafe_allow_html=True)
 
-    # ── Team hub: portal class · recruiting · schedule/SOS, all for THIS team ──
+    st.markdown("#### Full Rankings Table")
+    show=["rank_v2","School","power_index_v2","Rank_2025","delta_vs_2025","qb_name","qb_type"]
+    show=[c for c in show if c in df.columns or c in ["qb_name","qb_type"]]
+    tbl=disp[show].copy()
+    tbl.columns=["Rank","Team","PI V2","2025","Δ","QB","QB Type"]
+    tbl["Δ"]=tbl["Δ"].apply(lambda x:f"{int(x):+d}")
+    st.dataframe(tbl.style.format({"PI V2":"{:.1f}"}),use_container_width=True,
+                 hide_index=True,height=min(900,len(tbl)*38+40))
+
+# ════════════════════════ TAB 2: TEAM INTEL ════════════════════════
+with tab2:
+    team=st.selectbox("Select team",teams_sorted,key="ti")
+    r=df[df["School"]==team].iloc[0]; qbi=QB_2026.get(team,{})
+
+    k1,k2,k3,k4,k5=st.columns(5)
+    with k1: st.metric("V2 Rank",f"#{int(r['rank_v2'])}")
+    with k2: st.metric("Power Index",f"{r['power_index_v2']:.1f}")
+    with k3: st.metric("2025 Rank",f"#{int(r['Rank_2025'])}")
+    with k4:
+        d=int(r["delta_vs_2025"])
+        st.metric("Movement",f"{d:+d}",delta="Riser" if d>0 else ("Faller" if d<0 else "Stable"))
+    with k5:
+        sos=gc(r,"schedule_strength_score")
+        st.metric("SOS Score",f"{sos:.0f}/100")
+
+    st.markdown("#### QB Room — 2026")
+    qt=qbi.get("type","unknown")
+    qtype_lbl={"returning":"✅ Returning Starter","transfer":"🔄 Transfer Starter",
+                "battle":"⚠️ Open Battle","freshman":"🆕 Freshman","unknown":"❓ Unknown"}.get(qt,"❓")
+    if qbi.get("yds",0)>0:
+        st.markdown(f"""<div class="kpi" style="text-align:left;padding:16px 20px">
+          <div style="font-size:1.1rem;font-weight:700;color:#eae7e0;margin-bottom:8px">
+            {qbi.get('qb','?')} &nbsp;<span style="font-size:.78rem;color:#7a7ea8">{qtype_lbl}</span>
+          </div>
+          <div style="display:flex;gap:22px;flex-wrap:wrap">
+            <div><span style="color:#7a7ea8;font-size:.68rem">PASS YDS</span><br><b style="color:#c8aa6e;font-size:1.1rem">{qbi['yds']:,}</b></div>
+            <div><span style="color:#7a7ea8;font-size:.68rem">TD</span><br><b style="color:#6ec87a;font-size:1.1rem">{qbi['td']}</b></div>
+            <div><span style="color:#7a7ea8;font-size:.68rem">INT</span><br><b style="color:#e05252;font-size:1.1rem">{qbi['int']}</b></div>
+            <div><span style="color:#7a7ea8;font-size:.68rem">CMP%</span><br><b style="color:#eae7e0;font-size:1.1rem">{qbi['cmp']:.1f}%</b></div>
+            <div><span style="color:#7a7ea8;font-size:.68rem">YPA</span><br><b style="color:#eae7e0;font-size:1.1rem">{qbi['ypa']:.1f}</b></div>
+            <div><span style="color:#7a7ea8;font-size:.68rem">QB SCORE</span><br><b style="color:#c8aa6e;font-size:1.1rem">{qbi['score']}/100</b></div>
+          </div>
+        </div>""",unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="note"><strong>{qbi.get("qb","?")}</strong> — {qtype_lbl}. No stats available (open competition or freshman).</div>',unsafe_allow_html=True)
+
+    st.write("")
+    cr,cb=st.columns(2)
+    cats=[c[1] for c in COMPONENTS if c[0] in df.columns]
+    vals=[gc(r,c[0]) for c in COMPONENTS if c[0] in df.columns]
+    with cr:
+        st.markdown("#### Efficiency Radar")
+        cc=cats+[cats[0]]; vc=vals+[vals[0]]
+        fr=go.Figure()
+        fr.add_trace(go.Scatterpolar(r=vc,theta=cc,fill="toself",
+            line_color=GOLD,fillcolor="rgba(200,170,110,.18)",name=team))
+        fr.update_layout(**PL,height=370,
+            polar=dict(bgcolor="rgba(0,0,0,0)",
+                radialaxis=dict(visible=True,range=[0,100],gridcolor="#161a2e",tickfont=dict(size=8,color="#4a4e6a")),
+                angularaxis=dict(gridcolor="#1e2240",tickfont=dict(size=9,color="#b0b4c8"))))
+        st.plotly_chart(fr,use_container_width=True)
+    with cb:
+        st.markdown("#### Score Breakdown")
+        bc=[GREEN if v>=70 else (GOLD if v>=50 else RED) for v in vals]
+        fb=go.Figure(go.Bar(y=cats,x=vals,orientation="h",marker_color=bc,
+            text=[f"{v:.0f}" for v in vals],textposition="outside",textfont=dict(size=11,color="#9a9eb8")))
+        fb.update_layout(**PL,height=370,xaxis=dict(range=[0,110]),
+            yaxis=dict(autorange="reversed"),showlegend=False,
+            margin=dict(l=130,r=40,t=30,b=20))
+        sf(fb); st.plotly_chart(fb,use_container_width=True)
+
+    s3=sorted([(c[1],gc(r,c[0])) for c in COMPONENTS],key=lambda x:-x[1])
+    t3s=[s for s in s3 if s[1]>=65][:3]; w2s=[s for s in s3 if s[1]<52][:2]
+    rpt=f"**{team}** ranks **#{int(r['rank_v2'])}** entering 2026 (Δ{int(r['delta_vs_2025']):+d} vs 2025). "
+    if t3s: rpt+="Strengths: "+", ".join(f"**{n}** ({v:.0f})" for n,v in t3s)+". "
+    if w2s: rpt+="Concerns: "+", ".join(f"{n} ({v:.0f})" for n,v in w2s)+". "
+    if qt in("battle","freshman","unknown"): rpt+="⚠️ QB unresolved — highest uncertainty."
+    elif qt=="transfer": rpt+=f"Transfer QB {qbi.get('qb','?')} — scheme-adjustment discount applied."
+    st.markdown(f'<div class="note">{rpt}</div>',unsafe_allow_html=True)
+
+    st.markdown("#### 2026 Portal Additions")
+    tp=[p for p in PORTAL_ELITES if p[4]==team]
+    if tp:
+        tpdf=pd.DataFrame([{"Tier":t,"Player":pl,"Pos":po,"From":fr,"Rating":f"{rt:.2f}","2025 Stat":st2,"Role":ro,"NIL Est":ni}
+                           for t,pl,po,fr,_,rt,st2,_,ro,ni in tp])
+        st.dataframe(tpdf,use_container_width=True,hide_index=True)
+    else:
+        st.info("No verified elite/proven transfers in this team's 2026 class in the hardcoded set.")
+
+    st.markdown("#### 2026 Schedule")
+    if not sched_df.empty:
+        hc="home_team" if "home_team" in sched_df.columns else "homeTeam"
+        ac="away_team" if "away_team" in sched_df.columns else "awayTeam"
+        if hc in sched_df.columns:
+            games=sched_df[(sched_df[hc]==team)|(sched_df[ac]==team)].head(13).copy()
+            games["Site"]=games.apply(lambda g:"Home" if g[hc]==team else("Neutral" if g.get("neutral_site",False) else "Away"),axis=1)
+            games["Opponent"]=games.apply(lambda g:g[ac] if g[hc]==team else g[hc],axis=1)
+            if "week" in games.columns: games=games.rename(columns={"week":"Wk"})
+            sc=["Wk","Opponent","Site"] if "Wk" in games.columns else ["Opponent","Site"]
+            st.dataframe(games[sc],use_container_width=True,hide_index=True)
+    else:
+        st.info("Run `python scripts/01_pull_cfbd_data.py` (with your CFBD API key) to load the 2026 schedule.")
+
+# ════════════════════════ TAB 3: GAME PREDICTOR ════════════════════════
+with tab3:
+    st.markdown("### ⚔️ Head-to-Head Game Predictor")
+    c1,c2,c3=st.columns([2,1,2])
+    with c1: ta=st.selectbox("Team A",teams_sorted,index=0,key="gpa")
+    with c2: venue=st.radio("Venue",["Neutral",f"{ta.split()[0]} home","Away"],key="gpv")
+    with c3: tb=st.selectbox("Team B",teams_sorted,index=2,key="gpb")
+
+    w1,w2,w3=st.columns(3)
+    with w1: wind=st.slider("Wind (mph)",0,40,0,key="wind")
+    with w2: precip=st.checkbox("Precipitation",key="precip")
+    with w3: cold=st.checkbox("Cold (<35°F)",key="cold")
+
+    ra=df[df["School"]==ta].iloc[0]; rb=df[df["School"]==tb].iloc[0]
+    pa=ra["power_index_v2"]; pb=rb["power_index_v2"]
+    qa=QB_2026.get(ta,{}).get("score",50); qbs=QB_2026.get(tb,{}).get("score",50)
+    pa_adj=pa+(qa-65)*0.08; pb_adj=pb+(qbs-65)*0.08
+
+    pow_v={"Michigan","Penn State","Ohio State","Tennessee","Texas A&M","Alabama","LSU","Texas","Georgia"}
+    hfa=0.0
+    if "home" in venue: hfa=4.0 if ta in pow_v else 2.5
+    elif "Away" in venue: hfa=-(4.0 if tb in pow_v else 2.5)
+
+    wx=0.0
+    if wind>=20: wx+=(wind-15)*0.12
+    if precip: wx+=1.2
+    if cold: wx+=0.8
+    qa_ypa=QB_2026.get(ta,{}).get("ypa",7.5); qb_ypa=QB_2026.get(tb,{}).get("ypa",7.5)
+    if qa_ypa>qb_ypa: pa_adj-=wx
+    else: pb_adj-=wx
+
+    k=0.1; prob_a=1/(1+np.exp(-k*((pa_adj-pb_adj)+hfa)))
+    margin=(pa_adj-pb_adj+hfa)*0.38
+    fav=ta if prob_a>0.5 else tb
+    proj_a=max(14,round(21+margin/2)); proj_b=max(7,round(21-margin/2))
+
+    m1,m2,m3=st.columns(3)
+    with m1: st.markdown(f'<div class="kpi"><div class="lbl">{ta}</div><div class="val">{prob_a*100:.1f}%</div><div class="sub">PI {pa:.1f} · {QB_2026.get(ta,{}).get("qb","?")}</div></div>',unsafe_allow_html=True)
+    with m2: st.markdown(f'<div class="kpi"><div class="lbl">Projected</div><div class="val">{proj_a} – {proj_b}</div><div class="sub">{fav} by ~{abs(margin):.1f} pts</div></div>',unsafe_allow_html=True)
+    with m3: st.markdown(f'<div class="kpi"><div class="lbl">{tb}</div><div class="val">{(1-prob_a)*100:.1f}%</div><div class="sub">PI {pb:.1f} · {QB_2026.get(tb,{}).get("qb","?")}</div></div>',unsafe_allow_html=True)
+
+    fp=go.Figure()
+    fp.add_trace(go.Bar(y=["Win Prob"],x=[prob_a*100],orientation="h",marker_color=BLUE,name=ta,text=f"{prob_a*100:.0f}%",textposition="inside",textfont=dict(size=15,color="white")))
+    fp.add_trace(go.Bar(y=["Win Prob"],x=[(1-prob_a)*100],orientation="h",marker_color=RED,name=tb,text=f"{(1-prob_a)*100:.0f}%",textposition="inside",textfont=dict(size=15,color="white")))
+    fp.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(10,13,26,.85)",barmode="stack",height=90,xaxis=dict(visible=False),yaxis=dict(visible=False),margin=dict(l=0,r=0,t=0,b=0),legend=dict(orientation="h",x=0.5,xanchor="center",y=-0.6,font=dict(color="#b0b4c8")))
+    st.plotly_chart(fp,use_container_width=True)
+
+    wxn="" 
+    if wx>0: wxn=f" Weather: −{wx:.1f} pts to {ta if qa_ypa>qb_ypa else tb} (more pass-reliant)."
+    st.markdown(f'<div class="note"><strong>Analysis:</strong> {fav} is a <b>{max(prob_a,1-prob_a)*100:.0f}%</b> favorite. QB edge: {ta} ({QB_2026.get(ta,{}).get("qb","?")} score={qa}) vs {tb} ({QB_2026.get(tb,{}).get("qb","?")} score={qbs}). HFA: {hfa:+.1f} pts.{wxn}</div>',unsafe_allow_html=True)
+
+    st.markdown("#### Factor Breakdown")
+    frows=[]
+    for col,label,_ in COMPONENTS:
+        if col in df.columns:
+            va=gc(ra,col); vb=gc(rb,col)
+            frows.append({"Factor":label,ta:f"{va:.0f}",tb:f"{vb:.0f}","Edge":ta if va>vb else tb,"Gap":f"{abs(va-vb):.0f}"})
+    st.dataframe(pd.DataFrame(frows),use_container_width=True,hide_index=True)
+
     st.markdown("---")
-    st.markdown(f"### {team} — Roster Movement, Recruiting & Schedule")
-    hub1, hub2, hub3 = st.columns(3)
+    st.markdown("### 🎯 Interactive QB Assigner")
+    st.markdown("_Hypothetical: try any QB at either team and see the win probability shift._")
+    all_qbs=[(q["qb"],s,q["type"],q.get("score",50)) for s,q in QB_2026.items() if q.get("qb","TBD")!="TBD"]
+    qb_opts=[f"{n} ({sc}, {t}, score={s})" for n,sc,t,s in all_qbs]
+    qa2,qb2=st.columns(2)
+    with qa2:
+        sela=st.selectbox(f"Hypothetical QB for {ta}",["Use current"]+qb_opts,key="ha")
+        hsa=qa
+        if sela!="Use current":
+            m=re.search(r"score=(\d+)",sela)
+            if m: hsa=int(m.group(1))
+    with qb2:
+        selb=st.selectbox(f"Hypothetical QB for {tb}",["Use current"]+qb_opts,key="hb")
+        hsb=qbs
+        if selb!="Use current":
+            m=re.search(r"score=(\d+)",selb)
+            if m: hsb=int(m.group(1))
+    if sela!="Use current" or selb!="Use current":
+        pah=pa+(hsa-65)*0.08; pbh=pb+(hsb-65)*0.08
+        probh=1/(1+np.exp(-k*((pah-pbh)+hfa)))
+        diff=(probh-prob_a)*100
+        st.markdown(f'<div class="note"><strong>Hypothetical:</strong> With swapped QBs, {ta} win probability → <b>{probh*100:.1f}%</b> (base: {prob_a*100:.1f}%) — a <b>{diff:+.1f}pp</b> shift.</div>',unsafe_allow_html=True)
 
-    # Portal class for this team (latest season on file)
-    with hub1:
-        _yrs = portal_years()
-        _yr = _yrs[0] if _yrs else None
-        st.markdown(f"**🔄 Transfer Portal Class{(' — ' + _yr) if _yr else ''}**")
-        _p = load_portal_year(_yr) if _yr else pd.DataFrame()
-        if _p.empty:
-            st.caption("No portal data loaded.")
-        else:
-            _in = _p[_p["destination"].astype(str) == team]
-            _out = _p[_p["origin"].astype(str) == team]
-            pc = st.columns(3)
-            pc[0].metric("In", len(_in)); pc[1].metric("Out", len(_out))
-            pc[2].metric("Net", f"{len(_in) - len(_out):+d}")
-            top_adds = _in.sort_values("rating", ascending=False, na_position="last").head(5)
-            if not top_adds.empty:
-                st.caption("Top incoming:")
-                show = top_adds[["player", "pos_group", "origin"]].rename(
-                    columns={"player": "Player", "pos_group": "Pos", "origin": "From"})
-                st.dataframe(blank_na(show), use_container_width=True, hide_index=True, height=190)
-            st.caption("Full breakdown in the Roster & Portal tab →")
+# ════════════════════════ TAB 4: PORTAL LAB ════════════════════════
+with tab4:
+    st.markdown("### 🔬 Transfer Portal Lab — 2026")
+    tf=st.multiselect("Tiers",["Elite","Proven","Raw"],default=["Elite","Proven","Raw"],key="tf")
+    pteam=st.text_input("Filter by team","",key="ptf")
+    filt=[p for p in PORTAL_ELITES if p[0] in tf]
+    if pteam: filt=[p for p in filt if pteam.lower() in p[4].lower() or pteam.lower() in p[3].lower()]
 
-    # Recruiting class history for this team
-    with hub2:
-        st.markdown("**⭐ Recruiting Class History**")
-        _rec = load_raw("2022_2026_recruiting.csv")
-        if _rec.empty or "team" not in _rec.columns:
-            st.caption("No recruiting data loaded.")
-        else:
-            tr = _rec[_rec["team"].astype(str) == team].copy()
-            tr["year"] = pd.to_numeric(tr["year"], errors="coerce")
-            tr["rank"] = pd.to_numeric(tr["rank"], errors="coerce")
-            tr["points"] = pd.to_numeric(tr["points"], errors="coerce")
-            tr = tr.dropna(subset=["year"]).sort_values("year")
-            if tr.empty:
-                st.caption("No recruiting classes on file for this team.")
-            else:
-                latest = tr.iloc[-1]
-                rc = st.columns(2)
-                rc[0].metric(f"{int(latest['year'])} Class Rank", f"#{int(latest['rank'])}" if pd.notna(latest["rank"]) else "—")
-                rc[1].metric("Class Points", f"{latest['points']:.0f}" if pd.notna(latest["points"]) else "—")
-                fig = go.Figure(go.Scatter(
-                    x=tr["year"], y=tr["rank"], mode="lines+markers",
-                    line=dict(color=GOLD, width=2), marker=dict(size=8, color=GOLD)))
-                fig.update_layout(**PLOTLY_LAYOUT, height=210, title="Class rank by year (lower = better)",
-                                  yaxis=dict(autorange="reversed", gridcolor="#1e2240", title="Rank"),
-                                  xaxis=dict(dtick=1, title=None), margin=dict(l=40, r=20, t=40, b=30))
-                st.plotly_chart(styled(fig), use_container_width=True)
+    if filt:
+        prows=[{"Tier":t,"Player":pl,"Pos":po,"From":fr,"To":to2,"Rating":f"{rt:.2f}","2025 Production":st2,"Role":ro,"NIL Est":ni}
+               for t,pl,po,fr,to2,rt,st2,_,ro,ni in filt]
+        st.dataframe(pd.DataFrame(prows),use_container_width=True,hide_index=True,height=min(650,len(prows)*40+45))
 
-    # 2026 schedule + strength of schedule for this team
-    with hub3:
-        st.markdown("**📅 2026 Schedule Strength**")
-        _s = load_raw("2026_schedule.csv")
-        hc = next((c for c in ["home_team", "homeTeam", "home"] if c in _s.columns), None)
-        ac = next((c for c in ["away_team", "awayTeam", "away"] if c in _s.columns), None)
-        if _s.empty or not (hc and ac):
-            st.caption("No schedule data loaded.")
-        else:
-            tg = _s[(_s[hc] == team) | (_s[ac] == team)].copy()
-            tg["Opponent"] = np.where(tg[hc] == team, tg[ac], tg[hc])
-            rl = idx[["team", "rank_v2"]].rename(columns={"team": "Opponent", "rank_v2": "Opp Rank"})
-            tg = tg.merge(rl, on="Opponent", how="left")
-            ranked = tg["Opp Rank"].dropna()
-            sc = st.columns(2)
-            sc[0].metric("Games", len(tg))
-            sc[1].metric("Avg Opp Rank", f"{ranked.mean():.0f}" if len(ranked) else "—")
-            top5 = tg.dropna(subset=["Opp Rank"]).sort_values("Opp Rank").head(5)
-            if not top5.empty:
-                st.caption("Toughest opponents:")
-                show = top5[["Opponent", "Opp Rank"]].copy()
-                show["Opp Rank"] = show["Opp Rank"].astype(int)
-                st.dataframe(blank_na(show), use_container_width=True, hide_index=True, height=190)
-            st.caption("Full slate in the Schedule & Records tab →")
+    st.markdown("#### Best Receiving Programs (Elite + Proven)")
+    haul={}
+    for t,pl,po,fr,to2,rt,*_ in PORTAL_ELITES:
+        if t in("Elite","Proven"):
+            haul.setdefault(to2,{"count":0,"rt":0.0,"players":[]})
+            haul[to2]["count"]+=1; haul[to2]["rt"]+=rt; haul[to2]["players"].append(f"{pl}({po})")
+    hdf=pd.DataFrame([{"Team":k,"Adds":v["count"],"Avg Rating":v["rt"]/v["count"],"Key Adds":"; ".join(v["players"][:3])}
+                       for k,v in sorted(haul.items(),key=lambda x:-x[1]["count"])])
+    if not hdf.empty:
+        st.dataframe(hdf.style.format({"Avg Rating":"{:.3f}"}),use_container_width=True,hide_index=True)
 
-# ═══════════════════════════════════════════ Head-to-Head ══════════════════
-with t_h2h:
-    cL, cM, cR = st.columns([2, 1, 2])
-    with cL:
-        ta = st.selectbox("Team A", teams_sorted, index=0, key="h2h_a")
-    with cM:
-        venue = st.radio("Venue", ["Neutral", "Team A home", "Team B home"], key="h2h_v")
-        wind = st.slider("Wind (mph)", 0, 40, 0, key="h2h_wind")
-        precip = st.checkbox("Precipitation", key="h2h_precip")
-    with cR:
-        tb = st.selectbox("Team B", teams_sorted, index=min(2, len(teams_sorted) - 1), key="h2h_b")
+    st.markdown("#### 🎯 Raw / Unproven Prospects (Upside Targets)")
+    raw_p=[(t,pl,po,fr,to2,rt,st2,ro,ni) for t,pl,po,fr,to2,rt,st2,_,ro,ni in PORTAL_ELITES if t=="Raw"]
+    if raw_p:
+        rdf=pd.DataFrame([{"Player":pl,"Pos":po,"From":fr,"To":to2,"Rating":f"{rt:.2f}","Stat Context":st2,"Role":ro}
+                          for _,pl,po,fr,to2,rt,st2,ro,ni in raw_p])
+        st.dataframe(rdf,use_container_width=True,hide_index=True)
 
-    if ta == tb:
-        st.info("Pick two different teams.")
-    else:
-        location = {"Neutral": "neutral", "Team A home": "home_a", "Team B home": "home_b"}[venue]
-        weather = {"wind_speed": wind, "precipitation": 0.3 if precip else 0.0}
-        pred = P.predict_game(ta, tb, df=idx, location=location, weather=weather)
+    st.markdown("#### All 2026 QB Situations (Verified)")
+    qbrows=[]
+    for s,q in sorted(QB_2026.items()):
+        tr=df[df["School"]==s]
+        rk=int(tr["rank_v2"].iloc[0]) if not tr.empty else 999
+        qbrows.append({"Rank":rk,"Team":s,"QB":q["qb"],"Type":q["type"],
+            "2025 Yds":q["yds"] if q["yds"]>0 else "—","TD":q["td"] if q["td"]>0 else "—",
+            "INT":q["int"] if q["int"]>0 else "—","Score":q["score"]})
+    qbdf=pd.DataFrame(qbrows).sort_values("Rank")
+    st.dataframe(qbdf,use_container_width=True,hide_index=True,height=500)
 
-        st.write("")
-        p1, p2, p3 = st.columns(3)
-        p1.metric(ta, f"{pred.win_prob_a*100:.1f}%")
-        p2.metric("Projected", f"{pred.proj_score_a:.0f} – {pred.proj_score_b:.0f}")
-        p3.metric(tb, f"{pred.win_prob_b*100:.1f}%")
+# ════════════════════════ TAB 5: ABOUT ════════════════════════
+with tab5:
+    c1,c2=st.columns(2)
+    with c1:
+        st.markdown("### Model Overview")
+        st.markdown("""
+**V2 Power Index** = weighted composite of 8 components (each 0–100):
 
-        fig = go.Figure()
-        fig.add_trace(go.Bar(y=["Win Prob"], x=[pred.win_prob_a * 100], orientation="h",
-                             marker_color=BLUE, name=ta, text=f"{pred.win_prob_a*100:.0f}%",
-                             textposition="inside", textfont=dict(size=16, color="white")))
-        fig.add_trace(go.Bar(y=["Win Prob"], x=[pred.win_prob_b * 100], orientation="h",
-                             marker_color=RED, name=tb, text=f"{pred.win_prob_b*100:.0f}%",
-                             textposition="inside", textfont=dict(size=16, color="white")))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(12,15,26,0.8)",
-                          barmode="stack", height=90, xaxis=dict(visible=False), yaxis=dict(visible=False),
-                          margin=dict(l=0, r=0, t=0, b=0),
-                          legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.4))
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown(f"""<div class="note-box">{pred.narrative}</div>""", unsafe_allow_html=True)
+| Component | Weight |
+|---|---|
+| Prior-Year Quality | 35% |
+| Returning Production | 20% |
+| QB Room | 12% |
+| Transfer Impact | 10% |
+| Recruiting/Talent | 8% |
+| Coaching Continuity | 7% |
+| Schedule Strength | 5% |
+| Context | 3% |
 
-        cRad, cEdge = st.columns([1, 1])
-        comp = [c for c in SCORE_COLS if c in idx.columns]
-        ra, rb = idx[idx["team"] == ta].iloc[0], idx[idx["team"] == tb].iloc[0]
-        with cRad:
-            cats = [fmt_col(c) for c in comp] + [fmt_col(comp[0])]
-            fig = go.Figure()
-            fig.add_trace(go.Scatterpolar(r=[float(ra[c]) for c in comp] + [float(ra[comp[0]])],
-                                          theta=cats, fill="toself", name=ta, line_color=BLUE,
-                                          fillcolor="rgba(74,126,237,0.2)"))
-            fig.add_trace(go.Scatterpolar(r=[float(rb[c]) for c in comp] + [float(rb[comp[0]])],
-                                          theta=cats, fill="toself", name=tb, line_color=RED,
-                                          fillcolor="rgba(224,82,82,0.15)"))
-            fig.update_layout(**PLOTLY_LAYOUT, title="Component Radar",
-                              polar=dict(bgcolor="rgba(0,0,0,0)",
-                                         radialaxis=dict(visible=True, range=[0, 100], gridcolor="#1e2240",
-                                                         tickfont=dict(size=8, color="#4a4e6a")),
-                                         angularaxis=dict(gridcolor="#252850", tickfont=dict(size=9, color="#c0c3d4"))),
-                              height=420, legend=dict(x=0.5, xanchor="center", y=-0.08, orientation="h"))
-            st.plotly_chart(styled(fig), use_container_width=True)
-        with cEdge:
-            edges_df = pd.DataFrame([{
-                "Factor": e.label, ta: round(e.team_a_value, 0), tb: round(e.team_b_value, 0),
-                "Edge": "🔵" if e.diff > 0 else ("🔴" if e.diff < 0 else "—"), "Gap": round(abs(e.diff), 0),
-            } for e in pred.edges])
-            st.dataframe(edges_df, use_container_width=True, hide_index=True, height=300)
-            st.markdown('<span class="metric-pill">🔵 ' + ta + '</span> '
-                        '<span class="metric-pill" style="color:#e05252;border-color:rgba(224,82,82,0.3);">🔴 ' + tb + '</span>',
-                        unsafe_allow_html=True)
+**QB Room** now uses real 2026 verified starter data. Transfer QBs get a ~5–8% first-year discount.
 
-# ═══════════════════════════════════════════ Roster & Portal ═══════════════
-with t_roster:
-    st.subheader("Transfer Portal — Per-Team Class")
-    years_avail = portal_years()
-    if not years_avail:
-        empty_state(
-            "No transfer-portal data yet",
-            "Add incoming/outgoing transfers to light up the Transfer Impact component (position-weighted: QB &gt; OT/EDGE/CB &gt; WR/DL/LB &gt; RB).",
-            ["python3 scripts/01_pull_cfbd_data.py   # pulls portal for 2023–2026 (needs a CFBD key)",
-             "# each season lands as data/raw/{year}_transfer_portal_cfbd.csv"],
-        )
-    else:
-        ctl = st.columns([1, 3])
-        with ctl[0]:
-            ysel = st.selectbox("Season", years_avail, index=0, key="portal_year")
-        portal = load_portal_year(ysel)
-        # Team universe = anyone who shows up as an origin or destination this season.
-        univ = sorted({t for t in pd.concat([portal["destination"].dropna(), portal["origin"].dropna()]).astype(str).unique()
-                       if t and t.lower() not in ("none", "nan")})
-        with ctl[1]:
-            default_team = next((t for t in teams_sorted if t in univ), univ[0] if univ else None)
-            pteam = st.selectbox("Team", univ, index=univ.index(default_team) if default_team in univ else 0, key="portal_team")
+Missing files default to neutral 50/100. Run `python model_v2.py` to rebuild after adding data.
+        """)
+        st.markdown("#### Key Corrections vs Old Version")
+        st.markdown("""
+- ✅ **Arch Manning** = Texas starter (Quinn Ewers → NFL)
+- ✅ **Dante Moore** = Oregon starter (Gabriel left after 2024)  
+- ✅ **Bryce Underwood** = Michigan starter under Whittingham
+- ✅ **Sam Leavitt** = LSU QB under Lane Kiffin
+- ✅ **Rocco Becht** = Penn State QB following Matt Campbell
+        """)
+    with c2:
+        st.markdown("### Data Files Status")
+        files=[("cfb_combined_data.xlsx","2025 base stats","Required"),
+               ("data/raw/2026_returning_production.csv","Returning production","Important"),
+               ("data/raw/2026_coaches.csv","Coaching continuity","Important"),
+               ("data/raw/2022_2026_recruiting.csv","Recruiting talent","Important"),
+               ("data/raw/2026_schedule.csv","Schedule strength","Important"),
+               ("data/raw/2026_transfers.csv","Transfer detail","Nice-to-have"),
+               ("data/raw/2026_qb_rooms.csv","QB rooms file","Hardcoded in app ✅")]
+        frows=[{"File":os.path.basename(f),"Feeds":d,"Status":"✅" if os.path.exists(f) else "⬜","Priority":p}
+               for f,d,p in files]
+        st.dataframe(pd.DataFrame(frows),use_container_width=True,hide_index=True)
 
-        incoming = portal[portal["destination"].astype(str) == pteam].copy()
-        outgoing = portal[portal["origin"].astype(str) == pteam].copy()
+        st.markdown(f"""
+**QB Data Summary**
+- {sum(1 for q in QB_2026.values() if q['type']=='returning')} returning starters
+- {sum(1 for q in QB_2026.values() if q['type']=='transfer')} transfer starters  
+- {sum(1 for q in QB_2026.values() if q['type'] in ('battle','unknown','freshman'))} open battles/unknowns
+        """)
 
-        net_by_grp = (incoming.groupby("pos_group").size()
-                      .subtract(outgoing.groupby("pos_group").size(), fill_value=0))
-        k = st.columns(4)
-        k[0].metric("Incoming", len(incoming))
-        k[1].metric("Outgoing", len(outgoing))
-        k[2].metric("Net", f"{len(incoming) - len(outgoing):+d}")
-        avg_in = pd.to_numeric(incoming["rating"], errors="coerce").mean()
-        k[3].metric("Avg incoming rating", f"{avg_in:.3f}" if pd.notna(avg_in) else "—")
-
-        cIn, cOut = st.columns(2)
-        disp_cols_in = ["player", "pos_group", "position", "origin", "rating", "stars", "eligibility", "date"]
-        disp_cols_out = ["player", "pos_group", "position", "destination", "rating", "stars", "eligibility", "date"]
-        with cIn:
-            st.markdown(f"**Incoming — {ysel}** &nbsp;<span class='metric-pill' style='color:#6ec87a;border-color:rgba(110,200,122,0.3);'>adds</span>", unsafe_allow_html=True)
-            tin = incoming[[c for c in disp_cols_in if c in incoming.columns]].sort_values(
-                "rating", ascending=False, na_position="last").rename(
-                columns={"player": "Player", "pos_group": "Group", "position": "Pos",
-                         "origin": "From", "rating": "Rating", "stars": "Stars",
-                         "eligibility": "Elig", "date": "Date"})
-            st.dataframe(blank_na(tin), use_container_width=True, hide_index=True, height=360)
-        with cOut:
-            st.markdown(f"**Outgoing — {ysel}** &nbsp;<span class='metric-pill' style='color:#e05252;border-color:rgba(224,82,82,0.3);'>losses</span>", unsafe_allow_html=True)
-            tout = outgoing[[c for c in disp_cols_out if c in outgoing.columns]].sort_values(
-                "rating", ascending=False, na_position="last").rename(
-                columns={"player": "Player", "pos_group": "Group", "position": "Pos",
-                         "destination": "To", "rating": "Rating", "stars": "Stars",
-                         "eligibility": "Elig", "date": "Date"})
-            st.dataframe(blank_na(tout), use_container_width=True, hide_index=True, height=360)
-
-        st.markdown(f"#### Position-Need Analysis &nbsp;<span class='metric-pill'>{pteam} · {ysel} net adds by group</span>", unsafe_allow_html=True)
-        order = ["QB", "RB", "WR/TE", "OL", "DL", "EDGE", "LB", "DB", "ST", "ATH/Other"]
-        nb = net_by_grp.reindex(order).fillna(0)
-        nb = nb[nb != 0] if (nb != 0).any() else nb
-        colors = [GREEN if v > 0 else (RED if v < 0 else GRAY) for v in nb.values]
-        fig = go.Figure(go.Bar(x=nb.values, y=nb.index, orientation="h",
-                               marker_color=colors,
-                               text=[f"{int(v):+d}" for v in nb.values], textposition="outside",
-                               textfont=dict(color="#c0c3d4")))
-        fig.update_layout(**PLOTLY_LAYOUT, height=360, title=f"{pteam} — net portal movement by position group ({ysel})",
-                          xaxis_title="Net players (adds − losses)", yaxis=dict(autorange="reversed"))
-        fig.add_vline(x=0, line_color="#252850")
-        st.plotly_chart(styled(fig), use_container_width=True)
-
-        # ── Year-over-year: same team across every season on file ──
-        if len(years_avail) > 1:
-            st.markdown(f"#### {pteam} — Portal Trend Across Seasons")
-            yoy = []
-            for y in sorted(years_avail):
-                pf = load_portal_year(y)
-                if pf.empty:
-                    continue
-                ti = (pf["destination"].astype(str) == pteam).sum()
-                to = (pf["origin"].astype(str) == pteam).sum()
-                ar = pd.to_numeric(pf.loc[pf["destination"].astype(str) == pteam, "rating"], errors="coerce").mean()
-                yoy.append({"Season": y, "In": int(ti), "Out": int(to), "Net": int(ti - to),
-                            "Avg In Rating": round(ar, 3) if pd.notna(ar) else None})
-            yoy_df = pd.DataFrame(yoy)
-            if not yoy_df.empty:
-                cT, cTbl = st.columns([3, 2])
-                with cT:
-                    figy = go.Figure()
-                    figy.add_trace(go.Bar(x=yoy_df["Season"], y=yoy_df["In"], name="In", marker_color=GREEN))
-                    figy.add_trace(go.Bar(x=yoy_df["Season"], y=-yoy_df["Out"], name="Out", marker_color=RED))
-                    figy.add_trace(go.Scatter(x=yoy_df["Season"], y=yoy_df["Net"], name="Net",
-                                              mode="lines+markers", line=dict(color=GOLD, width=3)))
-                    figy.update_layout(**PLOTLY_LAYOUT, height=320, barmode="relative",
-                                       title=f"{pteam} — portal in/out by season",
-                                       xaxis=dict(type="category"), yaxis_title="Players")
-                    figy.add_hline(y=0, line_color="#252850")
-                    st.plotly_chart(styled(figy), use_container_width=True)
-                with cTbl:
-                    st.dataframe(blank_na(yoy_df), use_container_width=True, hide_index=True, height=320)
-        else:
-            st.markdown('<div class="note-box">Only <strong>' + years_avail[0] +
-                        '</strong> is on file. To compare year-over-year, run '
-                        '<code>python3 scripts/01_pull_cfbd_data.py</code> (it now pulls 2023–2026) '
-                        'so each season lands as <code>{year}_transfer_portal_cfbd.csv</code>.</div>',
-                        unsafe_allow_html=True)
-
-    st.subheader("Roster")
-    roster = load_raw("2026_rosters.csv")
-    if roster.empty:
-        empty_state("No roster data yet",
-                    "Rosters power position-level returning production (QB/OL continuity matters more than backup RB).",
-                    ["python3 scripts/01_pull_cfbd_data.py"])
-    else:
-        rteam = st.selectbox("Roster — team", sorted(roster["team"].dropna().unique()) if "team" in roster else [], key="roster_team")
-        st.dataframe(team_filter(roster, rteam) if rteam else roster, use_container_width=True, hide_index=True, height=420)
-
-# ═══════════════════════════════════════════ Schedule & Records ════════════
-with t_sched:
-    st.subheader("2026 Schedule & Strength")
-    sched = load_raw("2026_schedule.csv")
-    if sched.empty:
-        empty_state("No 2026 schedule yet",
-                    "The schedule drives Schedule Strength (avg opponent rating, road games) and projected records.",
-                    ["python3 scripts/01_pull_cfbd_data.py"])
-    else:
-        steam = st.selectbox("Schedule — team", teams_sorted, key="sched_team")
-        # CFBD /games uses camelCase homeTeam/awayTeam; manual templates may use snake_case.
-        home_col = next((c for c in ["home_team", "homeTeam", "home"] if c in sched.columns), None)
-        away_col = next((c for c in ["away_team", "awayTeam", "away"] if c in sched.columns), None)
-        if home_col and away_col:
-            tg = sched[(sched[home_col] == steam) | (sched[away_col] == steam)].copy()
-            is_home = tg[home_col] == steam
-            tg["Opponent"] = np.where(is_home, tg[away_col], tg[home_col])
-            neutral_col = next((c for c in ["neutral_site", "neutralSite", "neutral"] if c in tg.columns), None)
-            neutral = tg[neutral_col].fillna(False).astype(bool) if neutral_col else pd.Series(False, index=tg.index)
-            tg["Site"] = np.where(neutral, "Neutral", np.where(is_home, "Home", "Away"))
-            wk_col = next((c for c in ["week", "Week"] if c in tg.columns), None)
-            if wk_col:
-                tg["Week"] = pd.to_numeric(tg[wk_col], errors="coerce")
-            # Merge opponent power-index rank/score from the published index.
-            rank_lookup = idx[["team", "power_index_v2", "rank_v2"]].copy()
-            rank_lookup = rank_lookup.rename(columns={"team": "Opponent", "power_index_v2": "Opp Index", "rank_v2": "Opp Rank"})
-            tg = tg.merge(rank_lookup, on="Opponent", how="left")
-            tg["Opp Index"] = tg["Opp Index"].round(1)
-
-            home_n = int(is_home.sum()); away_n = int((tg["Site"] == "Away").sum())
-            ranked = tg["Opp Rank"].dropna()
-            k = st.columns(4)
-            k[0].metric("Games", len(tg)); k[1].metric("Home", home_n); k[2].metric("Away", away_n)
-            k[3].metric("Avg opp rank", f"{ranked.mean():.0f}" if len(ranked) else "—")
-
-            show_cols = [c for c in ["Week", "Opponent", "Site", "Opp Rank", "Opp Index"] if c in tg.columns]
-            tg_view = tg.sort_values("Week" if "Week" in tg.columns else "Opponent")[show_cols]
-            st.dataframe(blank_na(tg_view), use_container_width=True, hide_index=True, height=380)
-        else:
-            st.dataframe(sched, use_container_width=True, hide_index=True, height=360)
-
-    st.subheader("2025 Standings & Records — FBS")
-    records = load_raw("2025_records.csv")
-    if records.empty:
-        empty_state("No prior-season records yet",
-                    "Win/loss, home/away splits, and conference records come from the CFBD /records endpoint.",
-                    ["python3 scripts/01_pull_cfbd_data.py"])
-    else:
-        rec = records.copy()
-        # CFBD /records mixes FBS/FCS/D-II/D-III. Show only FBS so standings are readable.
-        if "classification" in rec.columns:
-            rec = rec[rec["classification"].astype(str).str.lower() == "fbs"]
-        rename = {
-            "team": "Team", "conference": "Conference",
-            "total.wins": "W", "total.losses": "L", "total.ties": "T",
-            "conferenceGames.wins": "Conf W", "conferenceGames.losses": "Conf L",
-            "homeGames.wins": "Home W", "homeGames.losses": "Home L",
-            "awayGames.wins": "Away W", "awayGames.losses": "Away L",
-            "expectedWins": "Exp Wins",
-        }
-        have = {k: v for k, v in rename.items() if k in rec.columns}
-        rdf = rec[list(have.keys())].rename(columns=have)
-        if "Exp Wins" in rdf.columns:
-            rdf["Exp Wins"] = pd.to_numeric(rdf["Exp Wins"], errors="coerce").round(1)
-        confs = sorted(rdf["Conference"].dropna().unique()) if "Conference" in rdf.columns else []
-        csel = st.selectbox("Conference", ["All"] + confs, key="rec_conf")
-        view = rdf if csel == "All" else rdf[rdf["Conference"] == csel]
-        sort_col = "W" if "W" in view.columns else view.columns[0]
-        view = view.sort_values(sort_col, ascending=False)
-        st.caption(f"{len(view):,} FBS teams")
-        st.dataframe(blank_na(view), use_container_width=True, hide_index=True, height=440)
-
-# ═══════════════════════════════════════════ Player Stats ══════════════════
-with t_players:
-    # ── Projected 2026 starting QBs: portal/draft-aware, ranked by QB score ──
-    st.subheader("Projected 2026 Starting QBs")
-    qb_cols = [c for c in ["projected_qb", "qb_score", "qb_status"] if c in idx.columns]
-    if {"projected_qb", "qb_score"}.issubset(idx.columns):
-        qb = idx[["team", "rank_v2"] + qb_cols].copy()
-        qb = qb[qb["projected_qb"].astype(str).str.strip().str.lower().ne("nan") & qb["projected_qb"].notna()]
-        # Attach each QB's 2025 passing line so it's clear what the score is built on.
-        # Prefer the curated starters file (its stats follow transfers to the new school);
-        # fall back to the raw player-stats pivot keyed on the QB's current team.
-        try:
-            _st = pd.read_csv(RAW / "2026_qb_starters.csv")
-            _sm = _st.rename(columns={"qb": "projected_qb", "yds_2025": "YDS", "td_2025": "TD",
-                                      "int_2025": "INT", "pct_2025": "PCT", "ypa_2025": "YPA"})
-            qb = qb.merge(_sm[["team", "projected_qb", "YDS", "TD", "INT", "PCT", "YPA"]],
-                          on=["team", "projected_qb"], how="left")
-        except Exception:
-            try:
-                _ps = pd.read_csv(RAW / "2025_player_stats.csv")
-                _pa = _ps[_ps["category"].astype(str).str.lower() == "passing"].copy()
-                _pa["stat"] = pd.to_numeric(_pa["stat"], errors="coerce")
-                _pw = _pa.pivot_table(index=["player", "team"], columns="statType", values="stat", aggfunc="first").reset_index()
-                _pw.columns.name = None
-                qb = qb.merge(_pw, left_on=["projected_qb", "team"], right_on=["player", "team"], how="left")
-            except Exception:
-                for c in ["YDS", "TD", "INT", "PCT", "YPA"]:
-                    qb[c] = np.nan
-        qb = qb.sort_values("qb_score", ascending=False)
-
-        def _qb_flag(s):
-            s = str(s or "").lower()
-            if "transfer" in s:
-                return "🔁 Transfer"
-            if "stepped up" in s:
-                return "⬆️ Stepped up"
-            if "limited" in s:
-                return "🆕 New starter"
-            if "returning" in s:
-                return "✅ Returning"
-            return "—"
-        if "qb_status" in qb.columns:
-            qb["Type"] = qb["qb_status"].map(_qb_flag)
-        else:
-            qb["Type"] = "—"
-
-        show_cols = ["projected_qb", "team", "Type", "qb_score", "YDS", "TD", "INT", "PCT", "YPA"]
-        lead = qb[[c for c in show_cols if c in qb.columns]].head(40).rename(columns={
-            "projected_qb": "QB", "team": "Team", "qb_score": "QB Score",
-            "YDS": "2025 Yds", "TD": "2025 TD", "INT": "2025 INT", "PCT": "Comp %", "YPA": "Yds/Att"})
-        for c in ["QB Score", "Comp %", "Yds/Att"]:
-            if c in lead.columns:
-                lead[c] = pd.to_numeric(lead[c], errors="coerce").round(1)
-        for c in ["2025 Yds", "2025 TD", "2025 INT"]:
-            if c in lead.columns:
-                lead[c] = pd.to_numeric(lead[c], errors="coerce").round(0)
-        st.caption("Each team's projected 2026 starter, resolved from the transfer portal + 2026 NFL draft departures (not a blanket 'everyone returns' assumption). "
-                   "A transfer's 2025 stats follow them to their new school. Score blends YPA, TD, completion %, INT avoidance, and volume.")
-        st.dataframe(blank_na(lead), use_container_width=True, hide_index=True, height=440)
     st.markdown("---")
-
-    st.subheader("Player Stats — last few seasons")
-    frames = []
-    for f in sorted(RAW.glob("*player_stats*.csv")):
-        try:
-            d = pd.read_csv(f)
-            if "season" not in d.columns:
-                # infer season from filename like 2025_player_stats.csv
-                yr = "".join(ch for ch in f.stem[:4] if ch.isdigit())
-                d["season"] = yr or f.stem
-            frames.append(d)
-        except Exception:
-            continue
-    players = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    if players.empty:
-        empty_state("No player stats yet",
-                    "Hold multiple seasons of player stats here to power QB scoring and position-level returning production.",
-                    ["python3 scripts/01_pull_cfbd_data.py   # pulls 2025 player + game stats",
-                     "# add more seasons as 2024_player_stats.csv, 2023_player_stats.csv, ..."])
-    elif {"category", "statType", "stat"}.issubset(players.columns):
-        # CFBD /stats/player/season is LONG: one row per (player, category, statType).
-        # Pivot to real stat lines so each player is a single row per category.
-        fc = st.columns(3)
-        cats = sorted(players["category"].dropna().astype(str).str.lower().unique())
-        default_cat = "passing" if "passing" in cats else (cats[0] if cats else None)
-        catsel = fc[0].selectbox("Category", cats, index=cats.index(default_cat) if default_cat in cats else 0, key="ps_cat")
-        seasons = sorted(players["season"].astype(str).dropna().unique())
-        ssel = fc[1].selectbox("Season", ["All"] + seasons, key="ps_season")
-        teams_in = sorted(players["team"].dropna().unique()) if "team" in players else []
-        tsel = fc[2].selectbox("Team", ["All"] + teams_in, key="ps_team")
-
-        sub = players[players["category"].astype(str).str.lower() == catsel].copy()
-        if ssel != "All":
-            sub = sub[sub["season"].astype(str) == ssel]
-        if tsel != "All" and "team" in sub:
-            sub = sub[sub["team"] == tsel]
-
-        sub["stat"] = pd.to_numeric(sub["stat"], errors="coerce")
-        idx_cols = [c for c in ["player", "team", "position", "season"] if c in sub.columns]
-        wide = sub.pivot_table(index=idx_cols, columns="statType", values="stat", aggfunc="first").reset_index()
-        wide.columns.name = None
-        # Sort by the most meaningful volume stat available for this category.
-        sort_pref = ["YDS", "TOT", "SACKS", "PTS", "REC", "INT", "TD", "ATT"]
-        sort_col = next((c for c in sort_pref if c in wide.columns), None)
-        if sort_col:
-            wide = wide.sort_values(sort_col, ascending=False, na_position="last")
-        ren = {"player": "Player", "team": "Team", "position": "Pos", "season": "Season"}
-        wide = wide.rename(columns={k: v for k, v in ren.items() if k in wide.columns})
-        st.caption(f"{len(wide):,} players — {catsel}")
-        st.dataframe(blank_na(wide), use_container_width=True, hide_index=True, height=460)
-    else:
-        # Fallback for wide-format files.
-        fc = st.columns(3)
-        tcol = "team" if "team" in players else ("School" if "School" in players else None)
-        psel = fc[0].selectbox("Team", ["All"] + (sorted(players[tcol].dropna().unique()) if tcol else []), key="ps_team")
-        ssel = fc[1].selectbox("Season", ["All"] + sorted(players["season"].astype(str).dropna().unique()), key="ps_season")
-        possel = fc[2].selectbox("Position", ["All"] + (sorted(players["position"].dropna().unique()) if "position" in players else []), key="ps_pos")
-        v = players.copy()
-        if psel != "All" and tcol:
-            v = v[v[tcol] == psel]
-        if ssel != "All":
-            v = v[v["season"].astype(str) == ssel]
-        if possel != "All" and "position" in v:
-            v = v[v["position"] == possel]
-        st.caption(f"{len(v):,} rows")
-        st.dataframe(v, use_container_width=True, hide_index=True, height=460)
-
-# ═══════════════════════════════════════════ Coaching ══════════════════════
-with t_coach:
-    st.subheader("Coaching Continuity & Staff Changes")
-    coaches = load_raw("2026_coaches.csv")
-    if coaches.empty:
-        empty_state("No coaching data yet",
-                    "Track HC/OC/DC retention and scheme changes. Returning QB + returning OC is a big stability signal; New HC + new coordinators is a red flag.",
-                    ["cp data/templates/2026_coaches_template.csv data/raw/2026_coaches.csv"])
-    else:
-        st.dataframe(coaches, use_container_width=True, hide_index=True, height=420)
-        ret_cols = [c for c in ["head_coach_retained", "oc_retained", "dc_retained"] if c in coaches.columns]
-        if ret_cols and "team" in coaches.columns:
-            cc = coaches.copy()
-            cc["stability"] = cc[ret_cols].apply(pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
-            cc = cc.sort_values("stability", ascending=False).head(20)
-            fig = px.bar(cc, x="stability", y="team", orientation="h",
-                         range_x=[0, len(ret_cols)], title="Staff retention (HC + OC + DC)")
-            fig.update_layout(**PLOTLY_LAYOUT, height=460, yaxis=dict(autorange="reversed"))
-            st.plotly_chart(styled(fig), use_container_width=True)
-
-# ═══════════════════════════════════════════ Methodology ═══════════════════
-with t_method:
-    st.markdown("### How the V2 Power Index Works")
-    cW, cF = st.columns(2)
-    with cW:
-        st.markdown("#### Component Weights")
-        wdf = pd.DataFrame({"Component": [fmt_col(c) for c in WEIGHTS], "Weight": [w * 100 for w in WEIGHTS.values()]})
-        fig = go.Figure(go.Bar(x=wdf["Weight"], y=wdf["Component"], orientation="h", marker_color=GOLD,
-                               text=wdf["Weight"].astype(int).astype(str) + "%", textposition="outside",
-                               textfont=dict(color="#c0c3d4")))
-        fig.update_layout(**PLOTLY_LAYOUT, height=330, xaxis_title="Weight (%)", yaxis=dict(autorange="reversed"))
-        st.plotly_chart(styled(fig), use_container_width=True)
-    with cF:
-        st.markdown("#### Key Modeling Choices")
-        st.markdown(
-            "- **Team strength vs. schedule are separated.** The published index includes "
-            "schedule, but `team_strength_rating` excludes it — the predictor uses strength only, "
-            "so a hard schedule never makes a team better at *beating* an opponent.\n"
-            "- **QB and OL continuity** matter more than RB continuity.\n"
-            "- **Transfer impact is position-weighted:** QB > OT/EDGE/CB > WR/DL/LB > RB.\n"
-            "- **Coaching** rewards retained HC/OC/DC and penalizes scheme changes.\n"
-            "- **Missing data defaults to a neutral 50/100** and is flagged in Data Coverage."
-        )
-    st.markdown("---")
-    st.markdown("#### Game Predictor Math")
-    st.latex(r"P(A\text{ beats }B) = \Phi\!\left(\frac{(R_A - R_B) + \text{HFA}}{\sigma}\right)")
-    st.markdown(
-        "Each team's 0–100 strength is standardized to a **points scale** (≈11 pts per "
-        "standard deviation). Margin = rating gap + home-field advantage (**2.4 pts**, 0 at "
-        "neutral). Win probability uses the normal model with a single-game outcome "
-        "**σ ≈ 16 points**. Projected total starts at the FBS average (**≈51**) and is split by "
-        "the margin; wind and precipitation lower the total and compress the favorite's edge."
-    )
-
-# ═══════════════════════════════════════════ Data Coverage ═════════════════
-with t_cov:
-    st.subheader("What's real vs. neutral filler")
-    if not coverage.empty:
-        cov = coverage.copy()
-        cov["component"] = cov["component"].map(fmt_col)
-        fig = px.bar(cov, x="coverage_pct", y="component", orientation="h", range_x=[0, 100],
-                     color="coverage_pct", color_continuous_scale=[(0, RED), (0.5, GOLD), (1, GREEN)],
-                     title="% of teams with real (non-default) data per component")
-        fig.update_layout(**PLOTLY_LAYOUT, height=380, yaxis=dict(autorange="reversed"),
-                          xaxis_title="Coverage %", coloraxis_showscale=False)
-        st.plotly_chart(styled(fig), use_container_width=True)
-
-    st.markdown("#### Raw data files")
-    expected = {
-        "2026_schedule.csv": "Schedule strength + projected records",
-        "2025_records.csv": "Past standings, home/away records",
-        "2025_player_stats.csv": "Player stats / QB scoring",
-        "2026_rosters.csv": "Position-level returning production",
-        "2026_returning_production.csv": "Returning production score",
-        "2026_qb_rooms.csv": "QB score",
-        "2026_transfers.csv": "Transfer impact score",
-        "2026_coaches.csv": "Coaching continuity score",
-        "2022_2026_recruiting.csv": "Recruiting talent score",
-    }
-    checks = []
-    for name, feeds in expected.items():
-        path = RAW / name
-        ok = path.exists() and path.stat().st_size > 0
-        rows = 0
-        if ok:
-            try:
-                rows = len(pd.read_csv(path))
-            except Exception:
-                rows = "read error"
-        checks.append({"File": name, "Feeds": feeds, "Status": "✅ Found" if ok else "⬜ Missing", "Rows": rows})
-    st.dataframe(pd.DataFrame(checks), use_container_width=True, hide_index=True)
-    st.markdown(
-        """<div class="note-box">Fastest path to lighting these up: fix CFBD auth
-        (<code>python3 scripts/00_diagnose_cfbd.py</code>) then
-        <code>python3 scripts/01_pull_cfbd_data.py</code>, or copy the templates in
-        <code>data/templates/</code> into <code>data/raw/</code> and fill them. Then rebuild with
-        <code>python3 scripts/03_build_power_index_v2.py</code>.</div>""",
-        unsafe_allow_html=True,
-    )
+    st.markdown('<small style="color:#4a4e6a">CFB Power Index V2 · Andrew White · MSBA, UT Austin McCombs · Not affiliated with ESPN, 247Sports, or NCAA</small>',unsafe_allow_html=True)
