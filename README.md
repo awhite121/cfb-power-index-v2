@@ -1,118 +1,104 @@
-# Building a Composite Power Index for College Football
+# 🏈 CFB Power Index V2
 
-Can efficiency metrics predict CFB Playoff teams better than raw rankings?
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cfb-power-index-v2.streamlit.app)
+
+**2025 Season Analysis + 2026 Preseason Projections** · Verified QB situations · Transfer portal intelligence · Game predictor with weather adjustments
+
+---
 
 ## Live App
-[Open the Streamlit Dashboard](https://cfb-power-index.streamlit.app)
 
-Season: 2025 FBS · 136 teams · 2025–26 College Football Playoff (12-team format)
-
----
-
-## Overview
-
-Traditional college football rankings rely heavily on win-loss records and subjective voter polls. This project takes a different approach — constructing a **composite Power Index** from six engineered efficiency metrics to rank every FBS team based on how they actually performed on both sides of the ball.
-
-We then validate the index against the **2025–26 College Football Playoff** — a season that featured Indiana's undefeated championship run, five SEC teams earning bids, and the controversial exclusion of Notre Dame in favor of conference champions Tulane and James Madison.
+👉 **[cfb-power-index-v2.streamlit.app](https://cfb-power-index-v2.streamlit.app)**
 
 ---
 
-## Results
+## What This Is
 
-### Power Index Rankings
-
-The index produces a near-normal distribution centered at zero, with elite teams clearly separating from the pack. Indiana, the eventual national champion, sits at #1 with significant separation from the field.
-
-![Power Index Distribution](figures/power_index_distribution.png)
-
-### Validation Against the Actual CFP
-
-We compared our top 12 against the committee's 12 selections. The index correctly identified the national champion, flagged Notre Dame's exclusion as a potential committee miss, and captured most of the field, while naturally struggling with automatic bids given to Group of 5 conference champions.
-
-![CFP Validation](figures/cfp_validation.png)
-
-### Championship Retrospective — Indiana vs. Miami (FL)
-
-A side-by-side efficiency profile of the national champion and runner-up. Indiana held advantages across multiple dimensions, which the index captured before the playoff even began.
-
-![Championship Comparison](figures/championship_comparison.png)
-
-### Win Probability Model
-
-Using the Power Index as input, a logistic win probability model estimates head-to-head outcomes at neutral sites. The model was retroactively tested against all 11 actual CFP bracket games.
-
-![Win Probability](figures/win_probability.png)
+A full college football analytics platform combining:
+- **V1** — 2025 season retrospective: composite efficiency rankings, CFP validation (9/11 bracket games correct), win probability model
+- **V2** — 2026 preseason projections: roster continuity, verified QB situations, transfer portal intelligence, recruiting talent, coaching continuity, schedule strength
 
 ---
 
-## Engineered Metrics
+## The 6 Tabs
 
-Raw totals are misleading — teams play 12 to 16 games depending on postseason. We derive six per-play and net efficiency metrics that normalize for opportunity:
-
-| Metric | Formula | What It Captures |
-|---|---|---|
-| Offensive Efficiency | PPG ÷ Plays/Game | Points generated per snap |
-| Explosive Score | Yds/Play × Off Efficiency | Big-play capability |
-| Defensive Efficiency | PPG Allowed ÷ Plays Faced | Points surrendered per snap |
-| Defensive Havoc Rate | Takeaways ÷ Plays Faced | Turnover creation rate |
-| Net PPG | Off PPG − Def PPG Allowed | Scoring margin |
-| Net Yards/Game | Off Yds − Def Yds Allowed | Yardage margin |
-
-Each metric is standardized to z-scores, then combined with domain-informed weights into a single composite score.
+| Tab | What it does |
+|-----|-------------|
+| **📊 2026 Rankings** | Top 10 cards, filterable bar chart (conference / movement / QB status), "why this team ranks here" explainer |
+| **🔍 Team Intel** | Per-team deep dive — 2025 efficiency profile, 2026 component radar, verified QB card with real stats, portal additions, schedule |
+| **🏆 2025 CFP History** | Power Index vs committee scatter, bracket retrodiction, CFP seed vs rank analysis |
+| **⚔️ Game Predictor** | Head-to-head win probability with weather adjustments + interactive QB assigner (what if a portal QB suited up?) |
+| **🔬 Portal Lab** | Transfer tier system (Elite/Proven/Raw), team hauls, upside targets, all 2026 QB situations |
+| **📐 Methodology** | V1 and V2 model specs, data file status, QB data sourcing |
 
 ---
 
-## Key Findings
+## 2026 Model — 8 Components
 
-- **The index identified the national champion.** Indiana ranked #1 in our Power Index before the playoff began.
-- **Notre Dame was the #4 team by efficiency** despite being left out of the CFP, supporting the argument that their exclusion was controversial.
-- **Efficiency-based ranking outperforms raw offensive rank** at identifying playoff-caliber teams.
-- **Natural blind spot for automatic bids.** Group of 5 champions (Tulane, James Madison) earn spots through conference rules, not necessarily through the kind of efficiency this index measures.
-- **The win probability model** correctly predicted the outcome of multiple CFP bracket games retroactively.
+| Component | Weight | Source |
+|-----------|--------|--------|
+| Prior-Year Team Quality | **35%** | 2025 efficiency stats |
+| Returning Production | **20%** | CBS Sports starters data |
+| QB Room | **12%** | Verified 2026 starters (hardcoded from ESPN/CBS) |
+| Transfer Impact | **10%** | 247Sports portal rankings |
+| Recruiting Talent | **8%** | CFBD 5-year composite |
+| Coaching Continuity | **7%** | Staff retention data |
+| Schedule Strength | **5%** | 2026 opponent quality |
+| Context | **3%** | Game-level factors |
 
----
-
-## Notebook Structure
-
-The analysis follows a linear narrative:
-
-1. **Setup & Data Loading**
-2. **Data Quality Check**
-3. **Exploratory Data Analysis**: scoring distributions, offense vs. defense quadrants, third-down efficiency, feature correlations
-4. **Feature Engineering**: six per-play/net metrics with rationale
-5. **Power Index Construction**: z-score standardization + weighted aggregation
-6. **Validation**: index vs. actual CFP selections, championship retrospective
-7. **Win Probability Model**: logistic model + retroactive bracket predictions
-8. **Team Profile Tool**: reusable function to profile any FBS team
-9. **Limitations & Future Work**
-10. **Conclusion**
+**Missing data defaults to neutral 50/100** — the model always runs and flags what's real vs estimated.
 
 ---
 
-## Tech Stack
+## Verified 2026 QB Data (Key Corrections)
 
-- Python 3.11+
-- pandas, numpy, scikit-learn, seaborn, matplotlib
+| Team | QB | Type | 2025 Stats |
+|------|----|------|-----------|
+| Ohio State | Julian Sayin | Returning | 3,610 yds / 32 TD / 77.0% comp (Big Ten record) |
+| Texas | Arch Manning | Returning | 3,163 yds / 26 TD / 7 INT |
+| Miami (FL) | Darian Mensah | Transfer (Duke) | 3,973 yds / 34 TD / 6 INT |
+| LSU | Sam Leavitt | Transfer (ASU) | 4,652 career yds / 36 TD |
+| Penn State | Rocco Becht | Transfer (Iowa State) | 9,275 career yds / 64 TD |
+| Auburn | Byrum Brown | Transfer (USF) | 3,158 yds / 28 TD + 1,008 rush yds |
+| Oklahoma State | Drew Mestemaker | Transfer (North Texas) | 4,379 yds / 34 TD (led FBS) |
 
 ---
 
-## How to Run
+## Running Locally
 
 ```bash
-git clone https://github.com/yourusername/cfb-power-index.git
-cd cfb-power-index
+git clone https://github.com/awhite121/cfb-power-index-v2.git
+cd cfb-power-index-v2
 pip install -r requirements.txt
-jupyter notebook CFB_Power_Index_Study.ipynb
+python model_v2.py           # builds cfb_power_index_v2.csv
+streamlit run app_v2.py
+```
+
+Requires `cfb_combined_data.xlsx` in the root directory for V1 features.
+
+---
+
+## Project Structure
+
+```
+cfb-power-index-v2/
+├── app_v2.py                    # Combined V1+V2 Streamlit app (6 tabs)
+├── model_v2.py                  # Model engine — builds all component scores
+├── cfb_power_index_v2.csv       # Generated V2 output
+├── cfb_combined_data.xlsx       # 2025 base stats (V1 + V2 prior-year quality)
+├── requirements.txt
+├── data/
+│   ├── raw/                     # API + manual source data
+│   └── processed/               # Generated model output
+└── scripts/
+    └── 01_pull_cfbd_data.py     # CFBD API puller
 ```
 
 ---
 
-## Future Work
+## Author
 
-- **Learn weights from data** — logistic regression on historical playoff outcomes across multiple seasons
-- **Strength of schedule adjustment** — especially important for fairly evaluating G5 teams
-- **Multi-year validation** — train on 2024 season, test on 2025
-- **Play-by-play EPA integration** — Expected Points Added for deeper efficiency measurement
-- **Two-stage model** — predict conference champions first, then rank the at-large field
+**Andrew White** — MSBA, University of Texas at Austin McCombs School of Business
 
----
+[![GitHub](https://img.shields.io/badge/GitHub-awhite121-181717?logo=github)](https://github.com/awhite121)
+[![Portfolio](https://img.shields.io/badge/Portfolio-andrewwhitedata.com-c8aa6e)](https://andrewwhitedata.com)
