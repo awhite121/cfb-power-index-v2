@@ -9,7 +9,15 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import os, re
-from sklearn.preprocessing import StandardScaler
+
+def zscore(frame):
+    """Column-wise standardization (mean 0, std 1), matching sklearn's
+    StandardScaler (population std, ddof=0). Returns a numpy array."""
+    a = np.asarray(frame, dtype=float)
+    mean = a.mean(axis=0)
+    std = a.std(axis=0)
+    std[std == 0] = 1.0
+    return (a - mean) / std
 
 st.set_page_config(page_title="CFB Power Index", page_icon="🏈",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -170,7 +178,7 @@ def load_v1():
         df["Net_PPG"] = df["Off_PPG"] - df["Def_PPG_Allowed"]
         df["Net_Yds"] = df["Off_Total_Yds"] - df["Def_TotalYds_Allowed"]
         metrics=["Off_Efficiency","Explosive_Score","Def_Efficiency","Def_Havoc_Rate","Net_PPG","Net_Yds"]
-        z=StandardScaler().fit_transform(df[metrics])
+        z=zscore(df[metrics])
         df["Power_Index"]=0.30*z[:,0]+0.20*z[:,1]-0.25*z[:,2]+0.10*z[:,3]+0.10*z[:,4]+0.05*z[:,5]
         df["Power_Rank"]=df["Power_Index"].rank(ascending=False).astype(int)
         df["Made_CFP"]=df["School"].isin(CFP_SEEDS.keys()).astype(int)
@@ -396,8 +404,7 @@ with tab2:
             st.markdown("#### 2025 Efficiency Profile")
             eff_labels=["Off Efficiency","Explosive Score","Def Efficiency","Havoc Rate","Net PPG/100","Net Yds/100"]
             all_v1=v1[["Off_Efficiency","Explosive_Score","Def_Efficiency","Def_Havoc_Rate","Net_PPG","Net_Yds"]].copy()
-            from sklearn.preprocessing import StandardScaler as SS
-            zz=SS().fit_transform(all_v1)
+            zz=zscore(all_v1)
             row_z=zz[v1.index.get_loc(r1.name)]
             bc2=[GREEN if z>0 else RED for z in row_z]
             # flip def_efficiency sign (lower is better)
