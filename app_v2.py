@@ -125,6 +125,20 @@ COMPONENTS = [
     ("context_score","Context",3),
 ]
 
+# v2/CFBD school names -> the legacy names used in v1's Excel data, QB_2026,
+# and PORTAL_ELITES. Without this, teams like Miami/BYU/Pitt/UConn crash the
+# Team Intel tab (IndexError) and silently lose QB/portal data elsewhere.
+NAME_ALIAS_V2_TO_V1={
+    "App State":"Appalachian State","BYU":"Brigham Young","Hawai'i":"Hawaii",
+    "Miami":"Miami (FL)","Middle Tennessee":"Middle Tennessee State",
+    "NC State":"North Carolina State","Pittsburgh":"Pitt",
+    "San José State":"San Jose State","Southern Miss":"Southern Mississippi",
+    "UConn":"Connecticut","UL Monroe":"Louisiana-Monroe",
+}
+def to_v1_name(name): return NAME_ALIAS_V2_TO_V1.get(name,name)
+NAME_ALIAS_V1_TO_V2={v:k for k,v in NAME_ALIAS_V2_TO_V1.items()}
+def to_v2_name(name): return NAME_ALIAS_V1_TO_V2.get(name,name)
+
 GOLD="#c8aa6e"; BLUE="#4a7eed"; RED="#e05252"; GREEN="#6ec87a"; GRAY="#3a3e5a"; PURPLE="#a87ee6"
 PL=dict(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(10,13,26,.85)",
         font=dict(family="Inter,sans-serif",color="#b0b4c8"),
@@ -182,8 +196,8 @@ if not v2.empty:
             if alt in v2.columns: v2=v2.rename(columns={alt:"rank_v2"}); break
     if "delta_vs_2025" not in v2.columns: v2["delta_vs_2025"]=0
     if "Rank_2025" not in v2.columns: v2["Rank_2025"]=v2.get("rank_v2",pd.Series(range(1,len(v2)+1)))
-    v2["qb_name"]=v2["School"].map(lambda s:QB_2026.get(s,{}).get("qb","Unknown"))
-    v2["qb_type"]=v2["School"].map(lambda s:QB_2026.get(s,{}).get("type","unknown"))
+    v2["qb_name"]=v2["School"].map(lambda s:QB_2026.get(to_v1_name(s),{}).get("qb","Unknown"))
+    v2["qb_type"]=v2["School"].map(lambda s:QB_2026.get(to_v1_name(s),{}).get("type","unknown"))
 
 has_v1 = not v1.empty
 has_v2 = not v2.empty
@@ -282,7 +296,7 @@ with tab1:
         er=v2[v2["School"]==et].iloc[0]
         s2=sorted([(c[1],gc(er,c[0])) for c in COMPONENTS],key=lambda x:-x[1])
         t3=[s for s in s2 if s[1]>=65][:3]; w2=[s for s in s2 if s[1]<52][:2]
-        qbi=QB_2026.get(et,{})
+        qbi=QB_2026.get(to_v1_name(et),{})
         msg=f"**{et}** ranks **#{int(er['rank_v2'])}** (was #{int(er['Rank_2025'])}, Δ{int(er['delta_vs_2025']):+d}). "
         if t3: msg+="Strengths: "+", ".join(f"**{n}** ({v:.0f})" for n,v in t3)+". "
         if w2: msg+="Concerns: "+", ".join(f"{n} ({v:.0f})" for n,v in w2)+". "
@@ -310,8 +324,9 @@ with tab2:
 
     # Get both V1 and V2 rows
     r2=v2[v2["School"]==team].iloc[0] if has_v2 else None
-    r1=v1[v1["School"]==team].iloc[0] if has_v1 else None
-    qbi=QB_2026.get(team,{})
+    _r1match=v1[v1["School"]==to_v1_name(team)] if has_v1 else pd.DataFrame()
+    r1=_r1match.iloc[0] if not _r1match.empty else None
+    qbi=QB_2026.get(to_v1_name(team),{})
 
     # KPI row
     k1,k2,k3,k4,k5=st.columns(5)
@@ -383,8 +398,7 @@ with tab2:
             all_v1=v1[["Off_Efficiency","Explosive_Score","Def_Efficiency","Def_Havoc_Rate","Net_PPG","Net_Yds"]].copy()
             from sklearn.preprocessing import StandardScaler as SS
             zz=SS().fit_transform(all_v1)
-            idx=v1[v1["School"]==team].index[0]
-            row_z=zz[v1.index.get_loc(idx)]
+            row_z=zz[v1.index.get_loc(r1.name)]
             bc2=[GREEN if z>0 else RED for z in row_z]
             # flip def_efficiency sign (lower is better)
             bc2[2]=GREEN if row_z[2]<0 else RED
@@ -408,7 +422,7 @@ with tab2:
 
     # Portal additions
     st.markdown("#### 2026 Portal Additions")
-    tp=[p for p in PORTAL_ELITES if p[4]==team]
+    tp=[p for p in PORTAL_ELITES if p[4]==to_v1_name(team)]
     if tp:
         pdf=pd.DataFrame([{"Tier":t,"Player":pl,"Pos":po,"From":fr,"Rating":f"{rt:.2f}","2025 Stat":st2,"Role":ro,"NIL":ni}
                           for t,pl,po,fr,_,rt,st2,ro,ni in tp])
@@ -551,7 +565,7 @@ with tab4:
     if use_v2_pred:
         ra=v2[v2["School"]==ta].iloc[0]; rb=v2[v2["School"]==tb].iloc[0]
         pa=ra["power_index_v2"]; pb=rb["power_index_v2"]
-        qa=QB_2026.get(ta,{}).get("score",50); qbs=QB_2026.get(tb,{}).get("score",50)
+        qa=QB_2026.get(to_v1_name(ta),{}).get("score",50); qbs=QB_2026.get(to_v1_name(tb),{}).get("score",50)
         pa_adj=pa+(qa-65)*0.08; pb_adj=pb+(qbs-65)*0.08
         hfa=0.0
         if "home" in venue: hfa=4.0 if ta in pow_v else 2.5
@@ -560,12 +574,12 @@ with tab4:
         if wind>=20: wx+=(wind-15)*0.12
         if precip: wx+=1.2
         if cold: wx+=0.8
-        qa_ypa=QB_2026.get(ta,{}).get("ypa",7.5); qb_ypa=QB_2026.get(tb,{}).get("ypa",7.5)
+        qa_ypa=QB_2026.get(to_v1_name(ta),{}).get("ypa",7.5); qb_ypa=QB_2026.get(to_v1_name(tb),{}).get("ypa",7.5)
         if qa_ypa>qb_ypa: pa_adj-=wx
         else: pb_adj-=wx
         k=0.1; prob_a=1/(1+np.exp(-k*((pa_adj-pb_adj)+hfa)))
         margin=(pa_adj-pb_adj+hfa)*0.38
-        qb_a_name=QB_2026.get(ta,{}).get("qb","?"); qb_b_name=QB_2026.get(tb,{}).get("qb","?")
+        qb_a_name=QB_2026.get(to_v1_name(ta),{}).get("qb","?"); qb_b_name=QB_2026.get(to_v1_name(tb),{}).get("qb","?")
     elif use_v1_pred:
         ra=v1[v1["School"]==ta].iloc[0]; rb=v1[v1["School"]==tb].iloc[0]
         pa=ra["Power_Index"]; pb=rb["Power_Index"]
@@ -678,7 +692,7 @@ with tab5:
     st.markdown("#### All Verified 2026 QB Situations")
     qbrows=[]
     for s,q in sorted(QB_2026.items()):
-        tr=v2[v2["School"]==s] if has_v2 else pd.DataFrame()
+        tr=v2[v2["School"]==to_v2_name(s)] if has_v2 else pd.DataFrame()
         rk=int(tr["rank_v2"].iloc[0]) if not tr.empty else 999
         qbrows.append({"Rank":rk,"Team":s,"QB":q["qb"],"Type":q["type"],
             "2025 Yds":q["yds"] if q["yds"]>0 else "—","TD":q["td"] if q["td"]>0 else "—",
