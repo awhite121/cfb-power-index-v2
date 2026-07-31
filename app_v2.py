@@ -123,13 +123,13 @@ BRACKET = [
 ]
 
 COMPONENTS = [
-    ("prior_year_team_quality_score","Prior-Year Quality",35),
-    ("returning_production_score","Returning Production",20),
-    ("qb_score","QB Room",12),
-    ("transfer_impact_score","Transfer Impact",10),
-    ("recruiting_talent_score","Recruiting/Talent",8),
-    ("coaching_continuity_score","Coaching",7),
-    ("schedule_strength_score","Schedule Strength",5),
+    ("returning_production_score","Returning Production",26),
+    ("prior_year_team_quality_score","Prior-Year Quality",22),
+    ("qb_score","QB Room",14),
+    ("transfer_impact_score","Transfer Impact",14),
+    ("recruiting_talent_score","Recruiting/Talent",12),
+    ("coaching_continuity_score","Coaching",5),
+    ("schedule_strength_score","Schedule Strength",4),
     ("context_score","Context",3),
 ]
 
@@ -192,6 +192,22 @@ def load_sched():
         if os.path.exists(p): return pd.read_csv(p)
     return pd.DataFrame()
 
+@st.cache_data
+def load_player_stats():
+    for p in ["data/raw/2025_player_stats.csv","2025_player_stats.csv"]:
+        if os.path.exists(p): return pd.read_csv(p)
+    return pd.DataFrame()
+
+@st.cache_data
+def conf_map():
+    """Team -> conference, learned from the player-stats feed (which carries a
+    conference column). Lets the Conference filter actually work."""
+    ps = load_player_stats()
+    if ps.empty or not {"team","conference"}.issubset(ps.columns): return {}
+    m = (ps.dropna(subset=["team","conference"])
+           .groupby("team")["conference"].agg(lambda s: s.value_counts().index[0]))
+    return m.to_dict()
+
 v2=load_v2(); v1=load_v1(); sched_df=load_sched()
 
 # Normalize V2 column names
@@ -206,6 +222,9 @@ if not v2.empty:
     if "Rank_2025" not in v2.columns: v2["Rank_2025"]=v2.get("rank_v2",pd.Series(range(1,len(v2)+1)))
     v2["qb_name"]=v2["School"].map(lambda s:QB_2026.get(to_v1_name(s),{}).get("qb","Unknown"))
     v2["qb_type"]=v2["School"].map(lambda s:QB_2026.get(to_v1_name(s),{}).get("type","unknown"))
+    if "conference" not in v2.columns:
+        _cm=conf_map()
+        if _cm: v2["conference"]=v2["School"].map(_cm)
 
 has_v1 = not v1.empty
 has_v2 = not v2.empty
@@ -220,6 +239,61 @@ else:
 def win_prob(pi_a,pi_b,hfa=0,k=1.2):
     return 1/(1+np.exp(-k*((pi_a-pi_b)+hfa)))
 
+def _sched_keys():
+    hc="home_team" if "home_team" in sched_df.columns else "homeTeam"
+    ac="away_team" if "away_team" in sched_df.columns else "awayTeam"
+    ncol=next((c for c in ["neutral_site","neutralSite","neutral"] if c in sched_df.columns),None)
+    wcol=next((c for c in ["week","Week"] if c in sched_df.columns),None)
+    return hc,ac,ncol,wcol
+
+def team_games(team):
+    """This team's 2026 games with opponent V2 rank, win probability, and a W/L
+    projection (power-index difference + home-field, on the V2 points scale)."""
+    if sched_df.empty or not has_v2: return pd.DataFrame()
+    hc,ac,ncol,wcol=_sched_keys()
+    if hc not in sched_df.columns: return pd.DataFrame()
+    pi=dict(zip(v2["School"],v2["power_index_v2"]))
+    rk=dict(zip(v2["School"],v2["rank_v2"]))
+    g=sched_df[(sched_df[hc]==team)|(sched_df[ac]==team)].copy()
+    rows=[]
+    for _,r in g.iterrows():
+        opp=r[ac] if r[hc]==team else r[hc]
+        neutral=bool(r[ncol]) if ncol and pd.notna(r.get(ncol)) else False
+        site="Neutral" if neutral else ("Home" if r[hc]==team else "Away")
+        if opp in pi:
+            hfa=0 if neutral else (3.0 if site=="Home" else -3.0)
+            p=1/(1+np.exp(-0.1*((pi[team]-pi[opp])+hfa)))
+        else:
+            p=0.90  # non-FBS / unrated opponent
+        rows.append({"Wk":r.get(wcol,np.nan) if wcol else np.nan,"Opponent":opp,"Site":site,
+                     "Opp Rank":rk.get(opp,np.nan),"Win %":round(p*100),"Pick":"W" if p>=0.5 else "L"})
+    out=pd.DataFrame(rows)
+    return out.sort_values("Wk") if "Wk" in out.columns and out["Wk"].notna().any() else out
+
+@st.cache_data
+def projected_records():
+    """Full-league projected 2026 records — every team's slate run through the
+    same win-probability model used by the Game Predictor."""
+    if sched_df.empty or not has_v2: return pd.DataFrame()
+    hc,ac,ncol,_=_sched_keys()
+    if hc not in sched_df.columns: return pd.DataFrame()
+    pi=dict(zip(v2["School"],v2["power_index_v2"]))
+    rows=[]
+    for team in v2["School"]:
+        g=sched_df[(sched_df[hc]==team)|(sched_df[ac]==team)]
+        w=l=0
+        for _,r in g.iterrows():
+            opp=r[ac] if r[hc]==team else r[hc]
+            if opp in pi:
+                neutral=bool(r[ncol]) if ncol and pd.notna(r.get(ncol)) else False
+                hfa=0 if neutral else (3.0 if r[hc]==team else -3.0)
+                p=1/(1+np.exp(-0.1*((pi[team]-pi[opp])+hfa)))
+                w+=1 if p>=0.5 else 0; l+=0 if p>=0.5 else 1
+            else:
+                w+=1
+        rows.append({"School":team,"Proj W":w,"Proj L":l,"Games":w+l})
+    return pd.DataFrame(rows)
+
 # ─── HEADER ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="hero">
@@ -232,12 +306,13 @@ if not has_v1 and not has_v2:
     st.stop()
 
 # ─── TABS ─────────────────────────────────────────────────────────────────────
-tab1,tab2,tab3,tab4,tab5,tab6 = st.tabs([
+tab1,tab2,tab3,tab4,tab5,tab7,tab6 = st.tabs([
     "📊 2026 Rankings",
     "🔍 Team Intel",
     "🏆 2025 CFP History",
     "⚔️ Game Predictor",
     "🔬 Portal Lab",
+    "📈 Player Stats",
     "📐 Methodology",
 ])
 
@@ -437,18 +512,24 @@ with tab2:
     else:
         st.info("No top-tier verified portal additions in the hardcoded set for this team.")
 
-    # Schedule
-    if not sched_df.empty:
-        st.markdown("#### 2026 Schedule")
-        hc="home_team" if "home_team" in sched_df.columns else "homeTeam"
-        ac="away_team" if "away_team" in sched_df.columns else "awayTeam"
-        if hc in sched_df.columns:
-            games=sched_df[(sched_df[hc]==team)|(sched_df[ac]==team)].head(13).copy()
-            games["Site"]=games.apply(lambda g:"Home" if g[hc]==team else("Neutral" if g.get("neutral_site",False) else "Away"),axis=1)
-            games["Opponent"]=games.apply(lambda g:g[ac] if g[hc]==team else g[hc],axis=1)
-            if "week" in games.columns: games=games.rename(columns={"week":"Wk"})
-            sc=["Wk","Opponent","Site"] if "Wk" in games.columns else ["Opponent","Site"]
-            st.dataframe(games[sc],use_container_width=True,hide_index=True)
+    # Schedule with projected results
+    tg=team_games(team)
+    if not tg.empty:
+        w=int((tg["Pick"]=="W").sum()); l=int((tg["Pick"]=="L").sum())
+        ranked=tg["Opp Rank"].dropna()
+        st.markdown("#### 2026 Schedule & Projected Results")
+        sk1,sk2,sk3,sk4=st.columns(4)
+        sk1.metric("Projected record",f"{w}–{l}")
+        sk2.metric("Games",len(tg))
+        sk3.metric("Avg opp rank",f"{ranked.mean():.0f}" if len(ranked) else "—")
+        sk4.metric("Ranked foes (top 25)",f"{int((ranked<=25).sum())}" if len(ranked) else "0")
+        disp=tg.copy()
+        disp["Wk"]=disp["Wk"].map(lambda x:int(x) if pd.notna(x) else "")
+        disp["Opp Rank"]=disp["Opp Rank"].map(lambda x:f"#{int(x)}" if pd.notna(x) else "—")
+        disp["Win %"]=disp["Win %"].map(lambda x:f"{int(x)}%")
+        st.dataframe(disp[["Wk","Opponent","Site","Opp Rank","Win %","Pick"]],
+                     use_container_width=True,hide_index=True,height=min(520,len(disp)*38+40))
+        st.caption("Win % = this team's projected win probability (power rating + home field). Unrated/FCS opponents shown as heavy favorites.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: 2025 CFP HISTORY (V1)
@@ -659,6 +740,27 @@ with tab4:
             diff=(probh-prob_a)*100
             st.markdown(f'<div class="note"><strong>Hypothetical:</strong> With swapped QBs, {ta} win probability → <b>{probh*100:.1f}%</b> (base: {prob_a*100:.1f}%) — a <b>{diff:+.1f}pp</b> shift.</div>',unsafe_allow_html=True)
 
+    # Projected full-season records for every team
+    if has_v2:
+        st.markdown("---")
+        st.markdown("### 📅 Projected 2026 Records — Whole League")
+        recs=projected_records()
+        if recs.empty:
+            st.info("No 2026 schedule loaded, so full-season records can't be projected.")
+        else:
+            recs=recs.merge(v2[["School","rank_v2"]+(["conference"] if "conference" in v2.columns else [])],on="School",how="left")
+            recs["Record"]=recs["Proj W"].astype(int).astype(str)+"–"+recs["Proj L"].astype(int).astype(str)
+            fpr=st.columns([2,1])
+            with fpr[0]:
+                conf_o=["All"]+sorted(recs["conference"].dropna().unique().tolist()) if "conference" in recs.columns else ["All"]
+                pc=st.selectbox("Conference",conf_o,key="prc")
+            rv=recs if pc=="All" else recs[recs["conference"]==pc]
+            rv=rv.sort_values(["Proj W","rank_v2"],ascending=[False,True])
+            cols=["rank_v2","School"]+(["conference"] if "conference" in rv.columns else [])+["Record","Proj W","Proj L","Games"]
+            tblp=rv[cols].rename(columns={"rank_v2":"Rank","conference":"Conf"})
+            st.dataframe(tblp,use_container_width=True,hide_index=True,height=520)
+            st.caption("Each team's real 2026 slate run through the win-probability model (home/away/neutral aware). A projection, not a guarantee — close games flip.")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5: PORTAL LAB
 # ══════════════════════════════════════════════════════════════════════════════
@@ -707,6 +809,44 @@ with tab5:
     st.dataframe(pd.DataFrame(qbrows).sort_values("Rank"),use_container_width=True,hide_index=True,height=480)
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 7: PLAYER STATS
+# ══════════════════════════════════════════════════════════════════════════════
+with tab7:
+    st.markdown("### 📈 Player Stat Leaderboards — 2025")
+    ps=load_player_stats()
+    if ps.empty:
+        st.warning("No player-stats file found (data/raw/2025_player_stats.csv).")
+    elif {"category","statType","stat"}.issubset(ps.columns):
+        if "season" not in ps.columns: ps=ps.assign(season="2025")
+        f1,f2,f3,f4=st.columns(4)
+        cats=sorted(ps["category"].dropna().astype(str).str.lower().unique())
+        dc="passing" if "passing" in cats else (cats[0] if cats else None)
+        with f1: catsel=st.selectbox("Category",cats,index=cats.index(dc) if dc in cats else 0,key="pl_cat")
+        confs=(["All"]+sorted(ps["conference"].dropna().astype(str).unique().tolist())) if "conference" in ps.columns else ["All"]
+        with f2: cfsel=st.selectbox("Conference",confs,key="pl_conf")
+        teams_p=sorted(ps["team"].dropna().unique().tolist()) if "team" in ps.columns else []
+        with f3: tsel=st.selectbox("Team",["All"]+teams_p,key="pl_team")
+        with f4: nshow=st.selectbox("Rows",[25,50,100,300],index=1,key="pl_n")
+
+        sub=ps[ps["category"].astype(str).str.lower()==catsel].copy()
+        if cfsel!="All" and "conference" in sub.columns: sub=sub[sub["conference"].astype(str)==cfsel]
+        if tsel!="All" and "team" in sub.columns: sub=sub[sub["team"]==tsel]
+        sub["stat"]=pd.to_numeric(sub["stat"],errors="coerce")
+        idxc=[c for c in ["player","team","position"] if c in sub.columns]
+        wide=sub.pivot_table(index=idxc,columns="statType",values="stat",aggfunc="first").reset_index()
+        wide.columns.name=None
+        sort_pref=["YDS","TOT","SACKS","PTS","REC","INT","TD","ATT"]
+        scol=next((c for c in sort_pref if c in wide.columns),None)
+        if scol: wide=wide.sort_values(scol,ascending=False,na_position="last")
+        wide=wide.rename(columns={"player":"Player","team":"Team","position":"Pos"})
+        st.caption(f"{len(wide):,} players — {catsel} (2025)" + ("" if cfsel=='All' else f" · {cfsel}"))
+        disp=wide.head(nshow)
+        disp=disp.astype(object).where(pd.notna(disp),"")
+        st.dataframe(disp,use_container_width=True,hide_index=True,height=560)
+    else:
+        st.dataframe(ps.head(300),use_container_width=True,hide_index=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TAB 6: METHODOLOGY
 # ══════════════════════════════════════════════════════════════════════════════
 with tab6:
@@ -732,20 +872,23 @@ Validated: **9/11 CFP bracket games** predicted correctly. Captured **6/12 CFP t
 
         st.markdown("### V2 — 2026 Forward-Looking Index")
         st.markdown("""
-Eight components, each 0–100, weighted composite. QB now uses verified 2026 starter data.
+Eight components, each 0–100, weighted composite. Weights were tuned to be **forward-looking**
+(a 2026 outlook, not a 2025 recap): who's coming back, the QB, and roster-building carry the most.
 
 | Component | Weight |
 |-----------|--------|
-| Prior-Year Quality | 35% |
-| Returning Production | 20% |
-| QB Room | 12% |
-| Transfer Impact | 10% |
-| Recruiting/Talent | 8% |
-| Coaching Continuity | 7% |
-| Schedule Strength | 5% |
+| Returning Production | 26% |
+| Prior-Year Quality | 22% |
+| QB Room | 14% |
+| Transfer Impact | 14% |
+| Recruiting/Talent | 12% |
+| Coaching Continuity | 5% |
+| Schedule Strength | 4% |
 | Context | 3% |
 
-Transfer QBs discounted 5–8% for first-year system adjustment. Missing data defaults to neutral 50/100.
+**Returning production** is computed from real data — each player's 2025 output minus who left via
+the portal or NFL draft. **QBs are portal/draft-aware:** departed starters are replaced by the actual
+2026 starter, and a transfer's stats follow them. Missing data defaults to neutral 50/100.
         """)
 
     with c2:
