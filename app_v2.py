@@ -530,6 +530,25 @@ def team_pool(team):
     out_names=set(outs["player"].str.lower()) if not outs.empty else set()
     dep_names=set(tdep["_nm"]) if not tdep.empty else set()  # all alias spellings
     tw["status"]=np.where(tw["_nm"].isin(out_names|dep_names),"departed","returning")
+
+    # ── Reconcile against the live 2026 roster ──────────────────────────────────
+    # Portal/departure feeds are from the off-season and go stale: players withdraw
+    # or the landing spot is never recorded. The live roster is the source of truth
+    # for who is actually on the team right now, so:
+    #   • anyone on the live roster is RETURNING (kills false departures)
+    #   • a 2025 contributor NOT on the live roster is genuinely DEPARTED
+    #   • portal ARRIVALS count only if they actually landed (on the roster)
+    #   • portal/curated DEPARTURES count only if they're truly gone
+    keys = live_roster_keys(team)
+    if keys:
+        tw["status"]=np.where(tw["player"].map(lambda n: on_live_roster(n,keys)),
+                              "returning","departed")
+        if not outs.empty:
+            outs=outs[~outs["player"].map(lambda n: on_live_roster(n,keys))]
+        if not ins.empty:
+            ins=ins[ins["player"].map(lambda n: on_live_roster(n,keys))]
+        if not tdep.empty:
+            tdep=tdep[~tdep["player"].map(lambda n: on_live_roster(n,keys))]
     if not tdep.empty: tdep=tdep.drop_duplicates(subset="_key")  # collapse aliases for display
     tw["origin"]="";tw["rating"]=np.nan;tw["stars"]=np.nan
     rows=[]
@@ -710,6 +729,47 @@ def preseason_rank(espn_name):
     s = espn_to_school(espn_name)
     m = v2[v2["School"] == s]
     return int(m.iloc[0]["rank_v2"]) if not m.empty else None
+
+# ── Live-roster reconciliation (fixes stale portal departures/arrivals) ─────────
+V2_TO_ESPN = {v: k for k, v in ESPN_TO_V2.items()}
+def school_to_espn(s): return V2_TO_ESPN.get(s, s)
+
+def norm_name(n):
+    """Normalize a player name for matching across ESPN / CFBD feeds."""
+    n = str(n).lower()
+    n = re.sub(r"\b(jr|sr|ii|iii|iv|v)\b\.?", "", n)
+    n = re.sub(r"[^a-z ]", " ", n)
+    return re.sub(r"\s+", " ", n).strip()
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def live_roster_keys(school):
+    """(full-name set, {(last, first-initial)}) for a team's live 2026 roster, or
+    None when unavailable — callers then skip reconciliation (never fabricate a
+    departure from missing data)."""
+    if FBS_TEAMS.empty: return None
+    row = FBS_TEAMS[FBS_TEAMS["team"] == school_to_espn(school)]
+    if row.empty: return None
+    ros = L.get_team_roster(row.iloc[0]["team_id"])
+    if ros is None or ros.empty: return None
+    full, ini = set(), set()
+    for nm in ros["name"]:
+        k = norm_name(nm)
+        if not k: continue
+        full.add(k)
+        p = k.split()
+        if len(p) >= 2: ini.add((p[-1], p[0][0]))
+    return full, ini
+
+def on_live_roster(name, keys):
+    """True if `name` plausibly matches someone on the live roster. Unknown keys
+    (None) return True so we never invent a departure when the feed is down."""
+    if not keys: return True
+    full, ini = keys
+    k = norm_name(name)
+    if not k: return True
+    if k in full: return True
+    p = k.split()
+    return len(p) >= 2 and (p[-1], p[0][0]) in ini
 
 def trend_chip(trend):
     t = str(trend)
@@ -1670,9 +1730,10 @@ if page == "Team HQ":
         dep_rows=[]
         if not outs.empty:
             for _,o in outs.iterrows():
-                dest=o["destination"] if pd.notna(o["destination"]) else "(in portal)"
+                reason=(f"Portal → {o['destination']}" if pd.notna(o["destination"])
+                        else "Transferred out")
                 dep_rows.append({"Player":o["player"],"Pos":o["position"],
-                                 "Reason":f"Portal → {dest}",
+                                 "Reason":reason,
                                  "Rating":o["rating"] if pd.notna(o["rating"]) else np.nan})
         if not tdep.empty:
             w_all_=pstats_wide()
