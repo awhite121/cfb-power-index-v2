@@ -656,7 +656,16 @@ if "page" not in st.session_state: st.session_state["page"]=PAGE_LIVE
 FBS_TEAMS=L.get_fbs_teams()
 FBS_LIST=FBS_TEAMS["team"].tolist() if not FBS_TEAMS.empty else []
 FBS_SET=set(FBS_LIST)
-# a pending click-through target set by team buttons on other pages
+# Click-through target — set either by a ?team= link (any logo/name is a link) or
+# by a button; both funnel here and route to the Team 2026 page.
+from urllib.parse import quote
+_qp_team = st.query_params.get("team")
+if _qp_team:
+    if _qp_team in FBS_SET:
+        st.session_state["live_team"]=_qp_team
+        st.session_state["page"]=PAGE_TEAM
+    try: del st.query_params["team"]
+    except Exception: pass
 _goto=st.session_state.pop("_goto_team",None)
 if _goto and _goto in FBS_SET:
     st.session_state["live_team"]=_goto
@@ -664,6 +673,13 @@ if _goto and _goto in FBS_SET:
 
 st.markdown('<div class="navmark"></div>', unsafe_allow_html=True)
 page=st.radio("Navigation",PAGES,key="page",horizontal=True,label_visibility="collapsed")
+
+def team_link(team_name, inner_html):
+    """Wrap arbitrary HTML in a link that opens the team's page (no-op if non-FBS)."""
+    if team_name not in FBS_SET:
+        return inner_html
+    return (f'<a href="?team={quote(str(team_name))}" target="_self" '
+            f'class="tlink">{inner_html}</a>')
 
 def team_button(team_name,key,label=None):
     """A small button that jumps to a team's Team 2026 page (if it's FBS)."""
@@ -857,6 +873,28 @@ div[role="radiogroup"] p{font-weight:600;font-size:.84rem;color:#9a9eb8}
   font-size:1rem;min-width:20px;text-align:center}
 .bteam .bnm{font-weight:700;color:#eae7e0;font-size:.9rem;line-height:1.15;overflow:hidden}
 .bteam .bnm small{display:block;color:#8489b4;font-weight:500;font-size:.68rem}
+
+/* click-anywhere team links — any logo/name/row that wraps in .tlink */
+a.tlink{display:block;text-decoration:none;color:inherit;border-radius:10px;
+  transition:background .12s,transform .12s}
+a.tlink:hover{background:rgba(200,170,110,.09)}
+a.tlink:hover .tm,a.tlink:hover .nm,a.tlink:hover .bnm{color:#f0d898!important}
+a.tlink .mt{cursor:pointer}
+.clickhint{font-size:.7rem;color:#6a7094;margin:2px 0 6px}
+.clickhint b{color:#c8aa6e}
+
+/* themed buttons — match the gold/dark system */
+.stButton>button{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);
+  color:#c8cbd8;border-radius:9px;font-weight:600;font-size:.8rem;transition:all .15s}
+.stButton>button:hover{border-color:#c8aa6e;color:#e9d9ab;background:rgba(200,170,110,.1)}
+.stButton>button:active{transform:translateY(1px)}
+
+/* team-colored accent on matchup cards */
+.mcard{border-left:3px solid var(--fav,rgba(200,170,110,.4))}
+
+/* dataframe container — softer frame that blends with the dark theme */
+[data-testid="stDataFrame"]{border:1px solid rgba(255,255,255,.07);border-radius:12px;overflow:hidden}
+[data-testid="stExpander"] summary:hover{color:#e2c78a}
 </style>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -892,11 +930,12 @@ if page == PAGE_LIVE:
         st.selectbox("Open a team", ["— open any team's page —"] + FBS_LIST,
                      key="live_jump", on_change=_jump, label_visibility="collapsed")
 
-        # ── This week's best matchups (click a team to open its page) ────────────
+        # ── This week's best matchups (click either team to open its page) ───────
         bm = L.best_matchups(sb, 6)
         if not bm.empty:
             st.markdown("#### 🔥 This Week's Best Matchups")
-            st.caption("Tap a team below any card to open its full page.")
+            st.markdown('<div class="clickhint">Click <b>any team</b> to open its page.</div>',
+                        unsafe_allow_html=True)
             cols = st.columns(3)
             for i, g in enumerate(bm.itertuples()):
                 c = cols[i % 3]
@@ -907,17 +946,18 @@ if page == PAGE_LIVE:
                 except Exception:
                     when = str(g.status)
                 spread = f"<b>{esc(g.spread)}</b>" if g.spread else "—"
-                c.markdown(f"""<div class="mcard">
-                  <div class="mt"><img src="{g.away_logo}"><span class="nm">{esc(g.away)}</span> {ar}
-                    <span class="rec" style="color:#5a5e7a;font-size:.72rem;margin-left:auto">{esc(g.away_rec)}</span></div>
-                  <div class="vs">AT</div>
-                  <div class="mt"><img src="{g.home_logo}"><span class="nm">{esc(g.home)}</span> {hr}
-                    <span class="rec" style="color:#5a5e7a;font-size:.72rem;margin-left:auto">{esc(g.home_rec)}</span></div>
+                # accent card in the favorite's color (home team as a simple proxy)
+                fav = team_color(espn_to_school(g.home))
+                away_row = team_link(g.away, f'<div class="mt"><img src="{g.away_logo}">'
+                    f'<span class="nm">{esc(g.away)}</span> {ar}'
+                    f'<span class="rec" style="color:#5a5e7a;font-size:.72rem;margin-left:auto">{esc(g.away_rec)}</span></div>')
+                home_row = team_link(g.home, f'<div class="mt"><img src="{g.home_logo}">'
+                    f'<span class="nm">{esc(g.home)}</span> {hr}'
+                    f'<span class="rec" style="color:#5a5e7a;font-size:.72rem;margin-left:auto">{esc(g.home_rec)}</span></div>')
+                c.markdown(f"""<div class="mcard" style="--fav:{fav}">
+                  {away_row}<div class="vs">AT</div>{home_row}
                   <div class="meta"><span>{esc(when)} · {esc(g.tv or "TV TBD")}</span><span>{spread}</span></div>
                 </div>""", unsafe_allow_html=True)
-                bA, bB = c.columns(2)
-                with bA: team_button(g.away, f"bm_a_{g.id}", f"→ {g.away_abbr or g.away}")
-                with bB: team_button(g.home, f"bm_h_{g.id}", f"→ {g.home_abbr or g.home}")
             st.write("")
 
         cA, cB = st.columns([3, 4])
@@ -933,20 +973,22 @@ if page == PAGE_LIVE:
                              '<span style="text-align:center">Rec</span>'
                              '<span style="text-align:center">My PI</span></div>']
                 for r in ap.itertuples():
-                    pr = preseason_rank(r.team)
-                    pit = f'<b>#{pr}</b>' if pr else '—'
+                    prk = preseason_rank(r.team)
+                    pit = f'<b>#{prk}</b>' if prk else '—'
                     fpv = f' · {int(r.fpv)} 1st' if getattr(r, "fpv", 0) else ''
-                    rows_html.append(
+                    row = (
                         f'<div class="aprow2"><span class="r">{r.rank}</span>'
                         f'<img src="{r.logo}">'
                         f'<span class="tm">{esc(r.team)} {trend_chip(r.trend)}'
                         f'<small>{int(r.points):,} pts{fpv}</small></span>'
                         f'<span class="pi" style="color:#8489b4">{esc(r.record)}</span>'
                         f'<span class="pi">{pit}</span></div>')
+                    rows_html.append(team_link(r.team, row))
                 rows_html.append('</div>')
                 st.markdown("".join(rows_html), unsafe_allow_html=True)
-                st.caption("**My PI** = my preseason Power Index rank — voters vs the model. "
-                           "Use the picker up top to open any team.")
+                st.markdown('<div class="clickhint">Click <b>any team</b> to open its page · '
+                            '<b>My PI</b> = my preseason model rank (voters vs model)</div>',
+                            unsafe_allow_html=True)
 
         # ── Live standings / FPI ───────────────────────────────────────────────
         with cB:
@@ -1418,10 +1460,11 @@ if page == PAGE_CFP:
             if row.empty: return '<div class="bteam ph">—</div>'
             r = row.iloc[0]
             ac = ' · <span style="color:#c8aa6e">conf champ</span>' if r["auto"] else ''
-            return (f'<div class="bteam"><img src="{r["logo"]}">'
+            cell = (f'<div class="bteam"><img src="{r["logo"]}">'
                     f'<span class="bseed">{int(r["seed"])}</span>'
                     f'<span class="bnm">{esc(r["name"])}<small>{esc(str(r.get("record","")))}'
                     f' · {r["p_title"]:.0f}% title{ac}</small></span></div>')
+            return team_link(r["name"], cell)
 
         bl, br = st.columns(2)
         with bl:
