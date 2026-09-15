@@ -647,8 +647,8 @@ if not has_v1 and not has_v2:
     st.stop()
 
 # ── Top navigation (session-state router so clicks elsewhere can switch pages) ──
-PAGE_LIVE="🔴 Live 2026"; PAGE_TEAM="📅 Team 2026"
-PAGES=[PAGE_LIVE,PAGE_TEAM,"Preseason Rankings","Team HQ","Game Predictor",
+PAGE_LIVE="🔴 Live 2026"; PAGE_TEAM="📅 Team 2026"; PAGE_CFP="🏆 Playoff Predictor"
+PAGES=[PAGE_LIVE,PAGE_TEAM,PAGE_CFP,"Preseason Rankings","Team HQ","Game Predictor",
        "Portal Lab","Player Stats","2025 CFP Retro","Methodology"]
 if "page" not in st.session_state: st.session_state["page"]=PAGE_LIVE
 
@@ -701,6 +701,92 @@ def trend_chip(trend):
     if t.startswith("+"): return f'<span style="color:#7fd48b;font-weight:700">▲ {t[1:]}</span>'
     if t.startswith("-"): return f'<span style="color:#ef7d7d;font-weight:700">▼ {t[1:]}</span>'
     return f'<span style="color:#8489b4">{esc(t)}</span>'
+
+# ── Unified power ratings: blend live FPI with my preseason model (points scale) ─
+def power_ratings():
+    """One table per FBS team: team_id, name, conf, logo, record, fpi, my rating,
+    blended rating (65% FPI / 35% mine) + ESPN's FPI odds columns. Everything the
+    playoff model needs, all keyed by ESPN team_id."""
+    fpi = L.get_fpi(); standings = L.get_standings()
+    if fpi.empty:
+        return pd.DataFrame()
+    df = fpi.copy()
+    df["team_id"] = df["team_id"].astype(str)
+    fv = pd.to_numeric(df.get("fpi"), errors="coerce")
+    fpi_std = float(fv.std()) or 12.0
+    df["fpi_pts"] = fv
+    id2loc = dict(zip(FBS_TEAMS["team_id"].astype(str), FBS_TEAMS["team"])) if not FBS_TEAMS.empty else {}
+    id2conf = dict(zip(standings["team_id"].astype(str), standings["conf"])) if not standings.empty else {}
+    id2rec = dict(zip(standings["team_id"].astype(str), standings["overall"])) if not standings.empty else {}
+    tsr = {}
+    if has_v2 and "team_strength_rating" in v2.columns:
+        m = float(v2["team_strength_rating"].mean()); s = float(v2["team_strength_rating"].std()) or 1.0
+        sch = dict(zip(v2["School"], v2["team_strength_rating"]))
+        for tid, loc in id2loc.items():
+            s2 = espn_to_school(loc)
+            if s2 in sch:
+                tsr[tid] = (sch[s2] - m) / s * fpi_std
+    def _blend(r):
+        f = r["fpi_pts"]; my = tsr.get(r["team_id"])
+        if pd.notna(f) and my is not None: return 0.65 * f + 0.35 * my
+        return f if pd.notna(f) else (my if my is not None else -15.0)
+    df["blended"] = df.apply(_blend, axis=1)
+    df["name"] = df["team_id"].map(id2loc).fillna(df["team"])
+    df["conf"] = df["team_id"].map(id2conf)
+    df["record"] = df["team_id"].map(id2rec)
+    return df.sort_values("blended", ascending=False).reset_index(drop=True)
+
+def project_cfp_field(pr):
+    """12-team field: 5 highest-rated conference champions get auto bids, then the
+    7 best remaining at-large teams; all 12 straight-seeded by blended rating.
+    Independents can't win a conference. Returns a seeded DataFrame (seed 1..12)."""
+    if pr is None or pr.empty:
+        return pd.DataFrame()
+    NON_CONF = {"FBS Indep.", "FBS Independents", "Independent", None}
+    champs = []
+    for conf, grp in pr[~pr["conf"].isin(NON_CONF)].dropna(subset=["conf"]).groupby("conf"):
+        top = grp.sort_values("blended", ascending=False).iloc[0]
+        champs.append(top)
+    champs = pd.DataFrame(champs).sort_values("blended", ascending=False)
+    auto = champs.head(5)
+    auto_ids = set(auto["team_id"])
+    at_large = pr[~pr["team_id"].isin(auto_ids)].head(7)
+    field = pd.concat([auto, at_large]).sort_values("blended", ascending=False).reset_index(drop=True)
+    field = field.head(12).copy()
+    field["seed"] = range(1, len(field) + 1)
+    field["auto"] = field["team_id"].isin(auto_ids)
+    return field
+
+def simulate_bracket(field, n=4000):
+    """Monte-Carlo the 12-team bracket (top 4 seeds bye; higher seed hosts round 1;
+    QF+ neutral) off blended ratings. Returns per-seed F4/final/title odds."""
+    import numpy as _np, math as _math
+    if field is None or len(field) < 12:
+        return field
+    r = field["blended"].to_numpy()
+    def wp(a, b, hfa=0.0):
+        return 0.5 * (1 + _math.erf((r[a] - r[b] + hfa) / (16.5 * _math.sqrt(2))))
+    rng = _np.random.default_rng(7)
+    f4 = _np.zeros(12); fin = _np.zeros(12); champ = _np.zeros(12)
+    pairs = [(4, 11), (5, 10), (6, 9), (7, 8)]   # seeds 5v12,6v11,7v10,8v9 (0-indexed)
+    for _ in range(n):
+        w = {}
+        for hi, lo in pairs:
+            w[(hi, lo)] = hi if rng.random() < wp(hi, lo, 2.4) else lo
+        # quarterfinals (reseed-free standard bracket), neutral sites
+        qf = [(0, w[(7, 8)]), (3, w[(4, 11)]), (2, w[(5, 10)]), (1, w[(6, 9)])]
+        qw = [a if rng.random() < wp(a, b) else b for a, b in qf]
+        for x in qw: f4[x] += 1
+        sf = [(qw[0], qw[1]), (qw[3], qw[2])]
+        sw = [a if rng.random() < wp(a, b) else b for a, b in sf]
+        for x in sw: fin[x] += 1
+        a, b = sw
+        champ[a if rng.random() < wp(a, b) else b] += 1
+    out = field.copy()
+    out["p_f4"] = (f4 / n * 100).round(1)
+    out["p_final"] = (fin / n * 100).round(1)
+    out["p_title"] = (champ / n * 100).round(1)
+    return out
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LIVE-TAB STYLING
@@ -758,6 +844,19 @@ div[role="radiogroup"] > label:has(input:checked) p{color:#e9d9ab!important}
 div[role="radiogroup"] p{font-weight:600;font-size:.84rem;color:#9a9eb8}
 .navmark + div [role="radiogroup"]{margin-bottom:6px;padding-bottom:10px;
   border-bottom:1px solid rgba(255,255,255,.08)}
+
+/* playoff bracket */
+.bgame{display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.022);
+  border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:10px 14px;margin-bottom:9px}
+.bgame.bye{opacity:.92;border-color:rgba(200,170,110,.25)}
+.bvs{color:#5a5e7a;font-size:.66rem;font-weight:800;letter-spacing:1.5px;min-width:28px;text-align:center}
+.bteam{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
+.bteam.ph{color:#5a5e7a}
+.bteam img{width:30px;height:30px;object-fit:contain}
+.bteam .bseed{font-family:'Playfair Display',serif;font-weight:800;color:#c8aa6e;
+  font-size:1rem;min-width:20px;text-align:center}
+.bteam .bnm{font-weight:700;color:#eae7e0;font-size:.9rem;line-height:1.15;overflow:hidden}
+.bteam .bnm small{display:block;color:#8489b4;font-weight:500;font-size:.68rem}
 </style>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1274,6 +1373,105 @@ if page == PAGE_TEAM:
                                             "height": st.column_config.TextColumn("Ht", width="small"),
                                             "weight": st.column_config.TextColumn("Wt", width="small"),
                                             "hometown": "Hometown"})
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: PLAYOFF PREDICTOR  (projected 12-team CFP field + bracket + odds)
+# ══════════════════════════════════════════════════════════════════════════════
+if page == PAGE_CFP:
+    c1, c2 = st.columns([5, 1])
+    with c1:
+        st.markdown("### 🏆 College Football Playoff Predictor")
+    with c2:
+        if st.button("↻ Refresh", key="cfp_refresh", use_container_width=True):
+            L.clear_live_cache(); st.rerun()
+    st.caption("Projected 12-team field — **5 highest-rated conference champions** get auto bids, "
+               "then the **7 best at-large** teams; all straight-seeded. Odds combine **ESPN FPI** "
+               "(its full-season simulation) with a Monte-Carlo run of the actual bracket off my "
+               "blended power rating (FPI + returning production, QB, transfers, coaching, schedule).")
+
+    with st.spinner("Building the bracket from live ratings…"):
+        pr = power_ratings()
+        field = project_cfp_field(pr)
+        field = simulate_bracket(field, n=4000) if not field.empty else field
+
+    if field is None or field.empty:
+        st.error("Couldn't reach ESPN to build the field right now. Try Refresh in a moment.")
+    else:
+        proj_champ = field.sort_values("p_title", ascending=False).iloc[0]
+        st.markdown(
+            f'<div class="tbanner" style="--c1:{team_color(espn_to_school(proj_champ["name"]))}">'
+            f'<div style="display:flex;align-items:center;gap:16px">'
+            f'<img src="{proj_champ["logo"]}" style="width:60px;height:60px;object-fit:contain">'
+            f'<div><div class="tmeta" style="opacity:.85">PROJECTED NATIONAL CHAMPION</div>'
+            f'<div class="tname">{esc(proj_champ["name"])}</div>'
+            f'<div class="tmeta">{proj_champ["p_title"]:.0f}% to win it all · '
+            f'#{int(proj_champ["seed"])} seed · {esc(str(proj_champ.get("record","")))}</div></div></div>'
+            f'</div>', unsafe_allow_html=True)
+
+        # ── Bracket view ────────────────────────────────────────────────────────
+        st.markdown("#### Projected Bracket")
+        byes = field[field["seed"] <= 4]
+        r1 = [(5, 12), (6, 11), (7, 10), (8, 9)]
+
+        def seed_cell(seed):
+            row = field[field["seed"] == seed]
+            if row.empty: return '<div class="bteam ph">—</div>'
+            r = row.iloc[0]
+            ac = ' · <span style="color:#c8aa6e">conf champ</span>' if r["auto"] else ''
+            return (f'<div class="bteam"><img src="{r["logo"]}">'
+                    f'<span class="bseed">{int(r["seed"])}</span>'
+                    f'<span class="bnm">{esc(r["name"])}<small>{esc(str(r.get("record","")))}'
+                    f' · {r["p_title"]:.0f}% title{ac}</small></span></div>')
+
+        bl, br = st.columns(2)
+        with bl:
+            st.markdown('<div class="fieldttl">First round — home site is higher seed</div>',
+                        unsafe_allow_html=True)
+            for hi, lo in r1:
+                st.markdown(f'<div class="bgame">{seed_cell(hi)}'
+                            f'<div class="bvs">vs</div>{seed_cell(lo)}</div>',
+                            unsafe_allow_html=True)
+        with br:
+            st.markdown('<div class="fieldttl">Top 4 seeds — first-round bye</div>',
+                        unsafe_allow_html=True)
+            for s in range(1, 5):
+                st.markdown(f'<div class="bgame bye">{seed_cell(s)}'
+                            f'<div class="bvs">BYE</div></div>', unsafe_allow_html=True)
+
+        # ── Odds table (my sim + ESPN FPI) ──────────────────────────────────────
+        st.markdown("#### Championship Odds")
+        view = st.radio("Pool", ["Projected 12-team field", "All contenders"],
+                        horizontal=True, key="cfp_view", label_visibility="collapsed")
+        base = field if view.startswith("Projected") else pr.head(30).copy()
+        if "seed" not in base.columns: base["seed"] = None
+        # attach FPI odds
+        for col in ["probmakeplayoffs", "probwinconf", "probwintitle"]:
+            if col not in base.columns: base[col] = np.nan
+        tbl = base.copy()
+        tbl["Seed"] = tbl["seed"]
+        tbl["FPI Make CFP %"] = pd.to_numeric(tbl.get("probmakeplayoffs"), errors="coerce").round(1)
+        tbl["FPI Title %"] = pd.to_numeric(tbl.get("probwintitle"), errors="coerce").round(1)
+        show_cols = ["Seed", "logo", "name", "conf", "record"]
+        my_cols = [c for c in ["p_f4", "p_final", "p_title"] if c in tbl.columns]
+        ren = {"logo": "", "name": "Team", "conf": "Conf", "record": "Rec",
+               "p_f4": "My Final 4 %", "p_final": "My Final %", "p_title": "My Title %"}
+        disp = tbl[show_cols + my_cols + ["FPI Make CFP %", "FPI Title %"]].rename(columns=ren)
+        st.dataframe(
+            disp, hide_index=True, use_container_width=True, height=min(560, len(disp) * 36 + 44),
+            column_config={
+                "Seed": st.column_config.NumberColumn("Seed", width="small"),
+                "": st.column_config.ImageColumn("", width="small"),
+                "Team": st.column_config.TextColumn("Team"),
+                "Conf": st.column_config.TextColumn("Conf", width="small"),
+                "Rec": st.column_config.TextColumn("Rec", width="small"),
+                "My Final 4 %": st.column_config.ProgressColumn("My Final 4 %", min_value=0, max_value=100, format="%d%%"),
+                "My Final %": st.column_config.ProgressColumn("My Final %", min_value=0, max_value=100, format="%d%%"),
+                "My Title %": st.column_config.ProgressColumn("My Title %", min_value=0, max_value=100, format="%d%%"),
+                "FPI Make CFP %": st.column_config.NumberColumn("FPI Make CFP %", format="%.1f%%"),
+                "FPI Title %": st.column_config.NumberColumn("FPI Title %", format="%.1f%%"),
+            })
+        st.caption("**My** columns = 4,000-run Monte-Carlo of this exact bracket off my blended rating. "
+                   "**FPI** columns = ESPN's independent full-season simulation. Both update live each week.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: 2026 RANKINGS
