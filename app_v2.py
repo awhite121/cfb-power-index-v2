@@ -561,6 +561,25 @@ def team_pool(team):
                          "stars":r["stars"],"_nm":str(r["player"]).lower()})
             rows.append(base)
     pool=pd.concat([tw,pd.DataFrame(rows)],ignore_index=True) if rows else tw
+
+    # Fold in live-roster players with no 2025 stats (true freshmen, unlisted
+    # transfers, walk-ons now on the two-deep) so the chart is exhaustive & current.
+    if keys:
+        ros=live_roster_df(team)
+        if ros is not None and not ros.empty:
+            pk=set(norm_name(n) for n in pool["player"])
+            pini=set((k.split()[-1],k.split()[0][0]) for k in pk if len(k.split())>=2)
+            def _in_pool(nm):
+                k=norm_name(nm)
+                if not k or k in pk: return True
+                p=k.split(); return len(p)>=2 and (p[-1],p[0][0]) in pini
+            extra=[{"player":r["name"],"position":slot_pos(r["pos"]),"team":team,
+                    "status":"returning","origin":"","rating":np.nan,"stars":np.nan,
+                    "_nm":str(r["name"]).lower()}
+                   for _,r in ros.iterrows() if not _in_pool(r["name"])]
+            if extra:
+                pool=pd.concat([pool,pd.DataFrame(extra)],ignore_index=True)
+
     num_cols=[c for c in pool.columns if c.startswith(("passing_","rushing_","receiving_","defensive_","interceptions_"))]
     for c in num_cols: pool[c]=pd.to_numeric(pool[c],errors="coerce").fillna(0)
     return pool,ins,outs,tdep
@@ -742,14 +761,19 @@ def norm_name(n):
     return re.sub(r"\s+", " ", n).strip()
 
 @st.cache_data(ttl=1800, show_spinner=False)
+def live_roster_df(school):
+    """The live 2026 ESPN roster for a School name, or empty if unavailable."""
+    if FBS_TEAMS.empty: return pd.DataFrame()
+    row = FBS_TEAMS[FBS_TEAMS["team"] == school_to_espn(school)]
+    if row.empty: return pd.DataFrame()
+    ros = L.get_team_roster(row.iloc[0]["team_id"])
+    return ros if ros is not None else pd.DataFrame()
+
 def live_roster_keys(school):
     """(full-name set, {(last, first-initial)}) for a team's live 2026 roster, or
     None when unavailable — callers then skip reconciliation (never fabricate a
     departure from missing data)."""
-    if FBS_TEAMS.empty: return None
-    row = FBS_TEAMS[FBS_TEAMS["team"] == school_to_espn(school)]
-    if row.empty: return None
-    ros = L.get_team_roster(row.iloc[0]["team_id"])
+    ros = live_roster_df(school)
     if ros is None or ros.empty: return None
     full, ini = set(), set()
     for nm in ros["name"]:
@@ -759,6 +783,13 @@ def live_roster_keys(school):
         p = k.split()
         if len(p) >= 2: ini.add((p[-1], p[0][0]))
     return full, ini
+
+# ESPN roster position code -> the position bucket the depth-chart slots use.
+ESPN_POS_TO_SLOT = {
+    "FB":"RB","OLB":"LB","ILB":"LB","MLB":"LB","DE":"DL","DT":"DL","NT":"DL",
+    "EDGE":"DL","SS":"S","FS":"S","DB":"S",
+}
+def slot_pos(pos): return ESPN_POS_TO_SLOT.get(str(pos).upper(), str(pos).upper())
 
 def on_live_roster(name, keys):
     """True if `name` plausibly matches someone on the live roster. Unknown keys
@@ -1709,7 +1740,9 @@ if page == "Team HQ":
 
     # Depth chart field
     st.markdown("#### Projected 2026 Depth Chart")
-    st.caption("2025 production, minus portal exits and NFL-draft/graduation departures, plus portal arrivals (blue accent). ★ = top-5 nationally at the position in 2025.")
+    st.caption("Reconciled to the **live 2026 roster** — 2025 producers who actually returned, "
+               "portal arrivals that landed (blue accent), and current-roster players with no 2025 "
+               "stats filling out the two-deep. ★ = top-5 nationally at the position in 2025.")
     picks,ins,outs,tdep=pick_depth(team)
     st.markdown(field_html(team,picks,AA_KEYS),unsafe_allow_html=True)
 
