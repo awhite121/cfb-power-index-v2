@@ -1051,6 +1051,24 @@ if page == PAGE_LIVE:
                 </div>""", unsafe_allow_html=True)
             st.write("")
 
+        # ── Live 2026 stat leaders ───────────────────────────────────────────────
+        leaders = L.get_stat_leaders()
+        if leaders:
+            st.markdown("#### 📈 2026 Stat Leaders")
+            id2name = dict(zip(FBS_TEAMS["team_id"].astype(str), FBS_TEAMS["team"])) \
+                if not FBS_TEAMS.empty else {}
+            lc = st.columns(len(leaders))
+            for i, ld in enumerate(leaders):
+                tname = id2name.get(str(ld["team_id"]), "")
+                logo = f'<img src="{ld["logo"]}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:5px">' if ld["logo"] else ""
+                inner = (f'<div class="kpi" style="text-align:left">'
+                         f'<div class="lbl">{esc(ld["cat"])}</div>'
+                         f'<div class="val" style="font-size:1.5rem">{esc(ld["value"])}</div>'
+                         f'<div class="sub">{logo}{esc(ld["player"])}</div></div>')
+                lc[i].markdown(team_link(tname, inner) if tname else inner,
+                               unsafe_allow_html=True)
+            st.write("")
+
         cA, cB = st.columns([3, 4])
 
         # ── AP Top 25 (dark, on-theme, with my preseason rank) ──────────────────

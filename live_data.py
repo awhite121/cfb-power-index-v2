@@ -32,10 +32,12 @@ except Exception:  # allow standalone import/testing without streamlit
         def cache_data(self, *a, **k): return _cache(*a, **k)
     st = _Dummy()  # type: ignore
 
+import re
 SEASON = 2026
 SITE = "https://site.api.espn.com/apis/site/v2/sports/football/college-football"
 SITE_V2 = "https://site.api.espn.com/apis/v2/sports/football/college-football"
 FITT = "https://site.web.api.espn.com/apis/fitt/v3/sports/football/college-football"
+CORE = "https://sports.core.api.espn.com/v2/sports/football/leagues/college-football"
 # NOTE: ESPN's API returns 403 for browser-like User-Agents on these hosts but
 # serves clean JSON to the default requests/curl agent, so we deliberately do NOT
 # spoof a browser UA here.
@@ -268,6 +270,39 @@ def get_fpi() -> pd.DataFrame:
         return df
     except Exception:
         return pd.DataFrame()
+
+
+@_cache(ttl=900, show_spinner=False)
+def get_stat_leaders() -> list:
+    """Live 2026 individual leaders (top player per key category) with team + value.
+    Resolves only the #1 athlete per category to stay cheap (a handful of calls)."""
+    labels = {"passingYards": "Passing Yds", "rushingYards": "Rushing Yds",
+              "receivingYards": "Receiving Yds", "sacks": "Sacks",
+              "interceptions": "INTs", "passingTouchdowns": "Pass TDs"}
+    try:
+        d = _get(f"{CORE}/seasons/{SEASON}/types/2/leaders")
+        out = []
+        by = {c.get("name"): c for c in d.get("categories", [])}
+        for key, lbl in labels.items():
+            c = by.get(key)
+            if not c or not c.get("leaders"):
+                continue
+            top = c["leaders"][0]
+            name = "?"
+            aref = (top.get("athlete") or {}).get("$ref")
+            if aref:
+                try:
+                    a = _get(aref); name = a.get("displayName") or a.get("fullName", "?")
+                except Exception:
+                    pass
+            tref = (top.get("team") or {}).get("$ref", "")
+            m = re.search(r"/teams/(\d+)", tref)
+            tid = m.group(1) if m else None
+            out.append({"cat": lbl, "player": name, "value": top.get("displayValue"),
+                        "team_id": tid, "logo": logo_url(tid) if tid else ""})
+        return out
+    except Exception:
+        return []
 
 
 @_cache(ttl=900, show_spinner=False)
