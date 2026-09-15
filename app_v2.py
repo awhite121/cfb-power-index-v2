@@ -646,11 +646,31 @@ if not has_v1 and not has_v2:
     st.error("No data found. Run `python model_v2.py` to generate `cfb_power_index_v2.csv` and ensure `cfb_combined_data.xlsx` is present.")
     st.stop()
 
-tabL,tabTL,tab1,tab2,tab4,tab5,tab7,tab3,tab6 = st.tabs([
-    "🔴 Live 2026","📅 Team 2026",
-    "Preseason Rankings","Team HQ","Game Predictor","Portal Lab",
-    "Player Stats","2025 CFP Retro","Methodology",
-])
+# ── Top navigation (session-state router so clicks elsewhere can switch pages) ──
+PAGE_LIVE="🔴 Live 2026"; PAGE_TEAM="📅 Team 2026"
+PAGES=[PAGE_LIVE,PAGE_TEAM,"Preseason Rankings","Team HQ","Game Predictor",
+       "Portal Lab","Player Stats","2025 CFP Retro","Methodology"]
+if "page" not in st.session_state: st.session_state["page"]=PAGE_LIVE
+
+# FBS team directory (cached) — used for click-through validation + team picker
+FBS_TEAMS=L.get_fbs_teams()
+FBS_LIST=FBS_TEAMS["team"].tolist() if not FBS_TEAMS.empty else []
+FBS_SET=set(FBS_LIST)
+# a pending click-through target set by team buttons on other pages
+_goto=st.session_state.pop("_goto_team",None)
+if _goto and _goto in FBS_SET:
+    st.session_state["live_team"]=_goto
+    st.session_state["page"]=PAGE_TEAM
+
+st.markdown('<div class="navmark"></div>', unsafe_allow_html=True)
+page=st.radio("Navigation",PAGES,key="page",horizontal=True,label_visibility="collapsed")
+
+def team_button(team_name,key,label=None):
+    """A small button that jumps to a team's Team 2026 page (if it's FBS)."""
+    if team_name not in FBS_SET: return
+    if st.button(label or f"→ {team_name}",key=key,use_container_width=True):
+        st.session_state["_goto_team"]=team_name
+        st.rerun()
 
 AA_KEYS=all_america_keys(tuple(v2["School"])) if has_v2 else set()
 
@@ -710,12 +730,40 @@ st.markdown("""
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(224,82,82,.55)}70%{box-shadow:0 0 0 9px rgba(224,82,82,0)}100%{box-shadow:0 0 0 0 rgba(224,82,82,0)}}
 .gsc{font-family:'Playfair Display',serif;font-weight:800;font-size:1.05rem;color:#eae7e0}
 .gsc.win{color:#7fd48b}.gsc.loss{color:#ef7d7d}
+
+/* clickable AP-poll rows (dark, on-theme) */
+.aprow2{display:grid;grid-template-columns:40px 32px 1fr 60px 44px;gap:12px;align-items:center;
+  padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.05)}
+.aprow2:hover{background:rgba(200,170,110,.06)}
+.aprow2 .r{font-family:'Playfair Display',serif;font-weight:800;font-size:1.2rem;color:#e9e6dd;text-align:center}
+.aprow2 img{width:26px;height:26px;object-fit:contain}
+.aprow2 .tm{font-weight:700;color:#eae7e0}
+.aprow2 .tm small{display:block;color:#8489b4;font-weight:500;font-size:.72rem}
+.aprow2 .pi{text-align:center;font-size:.72rem;color:#8489b4}
+.aprow2 .pi b{color:#c8aa6e;font-size:.9rem}
+.aphead{display:grid;grid-template-columns:40px 32px 1fr 60px 44px;gap:12px;padding:6px 14px;
+  font-size:.62rem;letter-spacing:1px;color:#6a7094;text-transform:uppercase;font-weight:700;
+  border-bottom:1px solid rgba(255,255,255,.1)}
+
+/* segmented / pill radios — top nav + in-page toggles read as one system */
+div[role="radiogroup"]{gap:6px;flex-wrap:wrap}
+div[role="radiogroup"] > label{
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);
+  border-radius:9px;padding:7px 15px;margin:0!important;cursor:pointer;transition:all .15s}
+div[role="radiogroup"] > label:hover{border-color:rgba(200,170,110,.45)}
+div[role="radiogroup"] > label > div:first-child{display:none!important}   /* hide the dot */
+div[role="radiogroup"] > label:has(input:checked){
+  background:rgba(200,170,110,.15);border-color:#c8aa6e}
+div[role="radiogroup"] > label:has(input:checked) p{color:#e9d9ab!important}
+div[role="radiogroup"] p{font-weight:600;font-size:.84rem;color:#9a9eb8}
+.navmark + div [role="radiogroup"]{margin-bottom:6px;padding-bottom:10px;
+  border-bottom:1px solid rgba(255,255,255,.08)}
 </style>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB: LIVE 2026  (AP poll, best matchups, scoreboard, live standings, FPI)
 # ══════════════════════════════════════════════════════════════════════════════
-with tabL:
+if page == PAGE_LIVE:
     ch1, ch2 = st.columns([5, 1])
     with ch1:
         st.markdown('<div class="livehdr"><span class="livedot"></span>'
@@ -737,21 +785,30 @@ with tabL:
         wk = sb.attrs.get("week") or ap.attrs.get("week") or ""
         st.caption(f"AP Top 25 · Scoreboard · Standings · FPI — live from ESPN · Week {wk} · 2026")
 
-        # ── This week's best matchups ──────────────────────────────────────────
+        # ── Jump straight to any team's page ────────────────────────────────────
+        def _jump():
+            v = st.session_state.get("live_jump")
+            if v and v != "— open any team's page —":
+                st.session_state["_goto_team"] = v
+        st.selectbox("Open a team", ["— open any team's page —"] + FBS_LIST,
+                     key="live_jump", on_change=_jump, label_visibility="collapsed")
+
+        # ── This week's best matchups (click a team to open its page) ────────────
         bm = L.best_matchups(sb, 6)
         if not bm.empty:
             st.markdown("#### 🔥 This Week's Best Matchups")
+            st.caption("Tap a team below any card to open its full page.")
             cols = st.columns(3)
             for i, g in enumerate(bm.itertuples()):
+                c = cols[i % 3]
                 hr = f'<span class="rk">#{int(g.home_rank)}</span>' if pd.notna(g.home_rank) and g.home_rank else ''
                 ar = f'<span class="rk">#{int(g.away_rank)}</span>' if pd.notna(g.away_rank) and g.away_rank else ''
-                when = ""
                 try:
                     when = pd.to_datetime(g.date).strftime("%a %-I:%M %p")
                 except Exception:
                     when = str(g.status)
                 spread = f"<b>{esc(g.spread)}</b>" if g.spread else "—"
-                cols[i % 3].markdown(f"""<div class="mcard">
+                c.markdown(f"""<div class="mcard">
                   <div class="mt"><img src="{g.away_logo}"><span class="nm">{esc(g.away)}</span> {ar}
                     <span class="rec" style="color:#5a5e7a;font-size:.72rem;margin-left:auto">{esc(g.away_rec)}</span></div>
                   <div class="vs">AT</div>
@@ -759,33 +816,38 @@ with tabL:
                     <span class="rec" style="color:#5a5e7a;font-size:.72rem;margin-left:auto">{esc(g.home_rec)}</span></div>
                   <div class="meta"><span>{esc(when)} · {esc(g.tv or "TV TBD")}</span><span>{spread}</span></div>
                 </div>""", unsafe_allow_html=True)
+                bA, bB = c.columns(2)
+                with bA: team_button(g.away, f"bm_a_{g.id}", f"→ {g.away_abbr or g.away}")
+                with bB: team_button(g.home, f"bm_h_{g.id}", f"→ {g.home_abbr or g.home}")
             st.write("")
 
         cA, cB = st.columns([3, 4])
 
-        # ── AP Top 25 ──────────────────────────────────────────────────────────
+        # ── AP Top 25 (dark, on-theme, with my preseason rank) ──────────────────
         with cA:
             st.markdown("#### 🏆 AP Top 25")
             if ap.empty:
                 st.info("AP poll unavailable right now.")
             else:
-                apd = ap.copy()
-                apd["Δ"] = apd["trend"]
-                apd["Preseason (mine)"] = apd["team"].map(lambda t: preseason_rank(t))
-                show = apd[["rank", "logo", "team", "record", "Δ", "points", "Preseason (mine)"]]
-                st.dataframe(
-                    show, hide_index=True, use_container_width=True, height=560,
-                    column_config={
-                        "rank": st.column_config.NumberColumn("#", width="small"),
-                        "logo": st.column_config.ImageColumn("", width="small"),
-                        "team": st.column_config.TextColumn("Team"),
-                        "record": st.column_config.TextColumn("Rec", width="small"),
-                        "Δ": st.column_config.TextColumn("Wk", width="small"),
-                        "points": st.column_config.NumberColumn("Pts", width="small"),
-                        "Preseason (mine)": st.column_config.NumberColumn("My PI", width="small",
-                            help="This team's rank in my preseason Power Index"),
-                    })
-                st.caption("**My PI** = where my preseason model had them — compare the model vs the voters.")
+                rows_html = ['<div class="card" style="padding:6px 0 2px">',
+                             '<div class="aphead"><span>#</span><span></span><span>Team</span>'
+                             '<span style="text-align:center">Rec</span>'
+                             '<span style="text-align:center">My PI</span></div>']
+                for r in ap.itertuples():
+                    pr = preseason_rank(r.team)
+                    pit = f'<b>#{pr}</b>' if pr else '—'
+                    fpv = f' · {int(r.fpv)} 1st' if getattr(r, "fpv", 0) else ''
+                    rows_html.append(
+                        f'<div class="aprow2"><span class="r">{r.rank}</span>'
+                        f'<img src="{r.logo}">'
+                        f'<span class="tm">{esc(r.team)} {trend_chip(r.trend)}'
+                        f'<small>{int(r.points):,} pts{fpv}</small></span>'
+                        f'<span class="pi" style="color:#8489b4">{esc(r.record)}</span>'
+                        f'<span class="pi">{pit}</span></div>')
+                rows_html.append('</div>')
+                st.markdown("".join(rows_html), unsafe_allow_html=True)
+                st.caption("**My PI** = my preseason Power Index rank — voters vs the model. "
+                           "Use the picker up top to open any team.")
 
         # ── Live standings / FPI ───────────────────────────────────────────────
         with cB:
@@ -850,16 +912,17 @@ with tabL:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB: TEAM 2026  (live per-team: record, stats, schedule, SOS, roster, blend)
 # ══════════════════════════════════════════════════════════════════════════════
-with tabTL:
+if page == PAGE_TEAM:
     fbs = L.get_fbs_teams()
     if fbs.empty:
         st.error("Couldn't reach ESPN to load the team list. Try again in a moment (runtime fetch).")
     else:
         names = fbs["team"].tolist()
-        default_ix = names.index("Texas") if "Texas" in names else 0
+        if "live_team" not in st.session_state or st.session_state["live_team"] not in names:
+            st.session_state["live_team"] = "Texas" if "Texas" in names else names[0]
         cpick1, cpick2 = st.columns([5, 1])
         with cpick1:
-            pick = st.selectbox("Select team", names, index=default_ix, key="live_team")
+            pick = st.selectbox("Select team", names, key="live_team")
         with cpick2:
             st.write(""); st.write("")
             if st.button("↻ Refresh", key="team_refresh", use_container_width=True):
@@ -980,19 +1043,13 @@ with tabTL:
         # ═══════════════════════════════════════════════════════════════════════
         st.markdown("---")
         st.markdown("### 🔮 Rest-of-Season Predictor")
-        st.caption("Blends **ESPN FPI** (live form) with **my preseason Power Index** "
-                   "(returning production, QB, transfers, coaching, schedule) into one points "
-                   "rating, then simulates every remaining game. Move the sliders — it recomputes live.")
+        st.caption("One power rating per team = **65% ESPN FPI** (live form) + **35% my preseason "
+                   "Power Index** (returning production, QB, transfers, coaching, schedule), then every "
+                   "remaining game is simulated with a home-field edge. Updates live each week.")
 
-        pc1, pc2, pc3 = st.columns(3)
-        with pc1:
-            blend = st.slider("Model blend", 0, 100, 60, 5, key="blend_w",
-                              help="0 = only my model · 100 = only ESPN FPI") / 100.0
-        with pc2:
-            hfa = st.slider("Home-field edge (pts)", 0.0, 5.0, 2.4, 0.2, key="hfa")
-        with pc3:
-            st.write(""); st.write("")
-            st.caption(f"Blend: **{int(blend*100)}% FPI / {int((1-blend)*100)}% mine**")
+        # Fixed, tuned parameters (kept simple — no knobs to fiddle).
+        blend = 0.65   # weight on live FPI vs my preseason model
+        hfa = 2.4      # home-field edge in points
 
         # Build a points-scale rating per ESPN team_id from FPI and my index.
         fpi_std = 12.0
@@ -1107,12 +1164,14 @@ with tabTL:
                     return vv.get("value")
             return None
 
+        def _num(x):
+            try: return float(str(x).replace(",", ""))
+            except Exception: return None
+
         if not tstats:
             st.info(f"No {season} team stats posted yet.")
         else:
-            gp = sval("rushing", "Team Games Played") or sval("scoring", "Team Games Played") or 1
-            try: gp = float(gp) or 1
-            except Exception: gp = 1
+            gp = _num(sval("rushing", "Team Games Played") or sval("scoring", "Team Games Played")) or 1
             off = [
                 ("Points / Game", sval("scoring", "Total Points Per Game")),
                 ("Total Yds / Game", None),
@@ -1121,11 +1180,10 @@ with tabTL:
                 ("Yds / Pass", sval("passing", "Yards Per Pass Attempt")),
                 ("Yds / Rush", sval("rushing", "Yards Per Rush Attempt")),
             ]
-            tot_yds = sval("rushing", "Total Yards") or sval("passing", "Total Yards")
-            plays = sval("rushing", "Total Offensive Plays")
+            tot_yds = _num(sval("rushing", "Total Yards") or sval("passing", "Total Yards"))
+            plays = _num(sval("rushing", "Total Offensive Plays"))
             if tot_yds:
-                try: off[1] = ("Total Yds / Game", round(float(tot_yds) / gp, 1))
-                except Exception: pass
+                off[1] = ("Total Yds / Game", round(tot_yds / gp, 1))
             st.markdown("**Offense**")
             oc = st.columns(len(off))
             for i, (lbl, val) in enumerate(off):
@@ -1138,7 +1196,7 @@ with tabTL:
                 ("Total Tackles", sval("defensive", "Total Tackles")),
                 ("Interceptions", sval("defensiveInterceptions", "Interceptions") or sval("defensive", "Interceptions")),
                 ("Fumbles Rec", sval("general", "Fumbles Recovered")),
-                ("Yds / Play", round(float(tot_yds) / float(plays), 1) if tot_yds and plays else None),
+                ("Yds / Play", round(tot_yds / plays, 1) if tot_yds and plays else None),
             ]
             st.markdown("**Defense & efficiency**")
             dc = st.columns(len(deff))
@@ -1148,70 +1206,79 @@ with tabTL:
                                f'<div class="sub">{season}</div></div>', unsafe_allow_html=True)
 
         # ═══════════════════════════════════════════════════════════════════════
-        # INTERACTIVE DEPTH CHART  (live roster grouped by position)
+        # DEPTH CHART  (field-style, live 2026 roster)
         # ═══════════════════════════════════════════════════════════════════════
         st.markdown("---")
-        st.markdown("### 🏈 Depth Chart")
+        st.markdown("### 🏈 Depth Chart  ·  live 2026 roster")
         if roster.empty:
             st.info("Roster unavailable right now.")
         else:
-            side = st.radio("Side of ball", ["Offense", "Defense", "Special Teams", "Full Roster"],
-                            horizontal=True, key="depth_side")
-            POS_GROUPS = {
-                "Offense": [("QB", ["QB"]), ("RB", ["RB", "FB"]), ("WR", ["WR"]),
-                            ("TE", ["TE"]), ("OL", ["OT", "OG", "C", "OL", "G", "T"])],
-                "Defense": [("DL", ["DE", "DT", "DL", "NT"]), ("EDGE", ["EDGE"]),
-                            ("LB", ["LB", "ILB", "OLB", "MLB"]),
-                            ("CB", ["CB", "DB"]), ("S", ["S", "SS", "FS"])],
-                "Special Teams": [("K", ["PK", "K"]), ("P", ["P"]), ("LS", ["LS"]),
-                                  ("Returner", ["RB", "WR"])],
-            }
             def cls_badge(cl):
-                cl = str(cl).upper()
-                return {"FR": "b", "SO": "g", "JR": "y", "SR": "r"}.get(cl, "")
-            if side == "Full Roster":
+                return {"FR": "b", "SO": "g", "JR": "y", "SR": "r"}.get(str(cl).upper(), "")
+
+            def rchip(r):
+                badge = cls_badge(r.cls)
+                cl = esc(r.cls) if str(r.cls) not in ("nan", "None", "") else ""
+                return (f'<div class="pchip"><div class="pos">#{esc(r.jersey)} · {esc(r.pos)}</div>'
+                        f'<div class="name">{esc(r.name)}</div>'
+                        f'<div class="pstat">{esc(r.height)} · {esc(r.weight)}</div>'
+                        f'<div class="tag"><span class="chip {badge}">{cl}</span></div></div>')
+
+            _ros = roster.rename(columns={"class": "cls"})
+            # Known 2026 starting QB (from curated QB data) surfaced first at QB.
+            _qbrow = qbs_df[qbs_df["team"] == sc] if not qbs_df.empty else pd.DataFrame()
+            _starter_qb = str(_qbrow.iloc[0]["qb"]).strip() if not _qbrow.empty else ""
+            _sq_last = _starter_qb.split()[-1].lower() if _starter_qb else ""
+
+            def take(poss, n):
+                sub = _ros[_ros["pos"].isin(poss)]
+                rows = list(sub.itertuples())
+                if "QB" in poss and _sq_last:  # float the known starter to the top
+                    rows.sort(key=lambda r: 0 if _sq_last in str(r.name).lower() else 1)
+                return rows[:n]
+
+            def frow(items):
+                return ('<div class="frow">' + "".join(rchip(r) for r in items) + '</div>') if items else ''
+
+            off = (f'<div class="fieldcol"><div class="fieldttl">Offense</div>'
+                   f'<div class="field" style="--c1:{cc}"><div class="endzone">{esc(pick)}</div>'
+                   f'{frow(take(["WR"],3)+take(["TE"],1))}'
+                   f'{frow(take(["QB"],1)+take(["RB","FB"],1))}'
+                   f'{frow(take(["OT","OG","C","OL","G","T","IOL"],5))}'
+                   f'</div></div>')
+            dfe = (f'<div class="fieldcol"><div class="fieldttl">Defense</div>'
+                   f'<div class="field" style="--c1:{cc}"><div class="endzone">Defense</div>'
+                   f'{frow(take(["DE","DT","DL","NT","EDGE"],4))}'
+                   f'{frow(take(["LB","ILB","OLB","MLB"],3))}'
+                   f'{frow(take(["CB","DB"],2)+take(["S","SS","FS"],2))}'
+                   f'</div></div>')
+            st.markdown(f'<div class="fieldwrap">{off}{dfe}</div>', unsafe_allow_html=True)
+            st.caption("Live 2026 roster, grouped by unit (ESPN doesn't publish an official two-deep, "
+                       "so within a group players are listed alphabetically — the projected starting QB "
+                       "is floated first). Class badges: "
+                       "<span class='chip b'>FR</span> <span class='chip g'>SO</span> "
+                       "<span class='chip y'>JR</span> <span class='chip r'>SR</span>",
+                       unsafe_allow_html=True)
+
+            with st.expander(f"📋 Full roster — {len(roster)} players (searchable)"):
                 q = st.text_input("Filter by name or position", "", key="roster_filter")
                 rr = roster.copy()
                 if q:
-                    m = rr["name"].str.contains(q, case=False, na=False) | \
-                        rr["pos"].str.contains(q, case=False, na=False)
-                    rr = rr[m]
+                    rr = rr[rr["name"].str.contains(q, case=False, na=False) |
+                            rr["pos"].str.contains(q, case=False, na=False)]
                 st.dataframe(rr[["jersey", "name", "pos", "class", "height", "weight", "hometown"]],
-                             hide_index=True, use_container_width=True, height=520,
+                             hide_index=True, use_container_width=True, height=460,
                              column_config={"jersey": st.column_config.TextColumn("#", width="small"),
                                             "name": "Name", "pos": st.column_config.TextColumn("Pos", width="small"),
                                             "class": st.column_config.TextColumn("Cl", width="small"),
                                             "height": st.column_config.TextColumn("Ht", width="small"),
                                             "weight": st.column_config.TextColumn("Wt", width="small"),
                                             "hometown": "Hometown"})
-            else:
-                groups = POS_GROUPS[side]
-                gcols = st.columns(len(groups))
-                for i, (label, poss) in enumerate(groups):
-                    sub = roster[roster["pos"].isin(poss)].copy().rename(columns={"class": "cls"})
-                    gcols[i].markdown(f'<div class="fieldttl">{label} · {len(sub)}</div>',
-                                      unsafe_allow_html=True)
-                    if sub.empty:
-                        gcols[i].markdown('<div class="pchip ph"><div class="name">—</div></div>',
-                                          unsafe_allow_html=True)
-                    for r in sub.head(4).itertuples():
-                        badge = cls_badge(r.cls)
-                        cl = esc(r.cls) if str(r.cls) not in ("nan", "None", "") else ""
-                        gcols[i].markdown(
-                            f'<div class="pchip"><div class="pos">#{esc(r.jersey)} · {esc(r.pos)}</div>'
-                            f'<div class="name">{esc(r.name)}</div>'
-                            f'<div class="pstat">{esc(r.height)} · {esc(r.weight)}</div>'
-                            f'<div class="tag"><span class="chip {badge}">{cl}</span></div></div>',
-                            unsafe_allow_html=True)
-            st.caption("Live from ESPN's roster feed. Class badges: "
-                       "<span class='chip b'>FR</span> <span class='chip g'>SO</span> "
-                       "<span class='chip y'>JR</span> <span class='chip r'>SR</span>",
-                       unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: 2026 RANKINGS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab1:
+if page == "Preseason Rankings":
     if not has_v2:
         st.warning("V2 model data not found. Run `python model_v2.py` to generate rankings.")
     else:
@@ -1312,7 +1379,7 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2: TEAM HQ
 # ══════════════════════════════════════════════════════════════════════════════
-with tab2:
+if page == "Team HQ":
     team=st.selectbox("Select team",teams_sorted,key="ti")
     r2=v2[v2["School"]==team].iloc[0] if has_v2 else None
     _r1match=v1[v1["School"]==to_v1_name(team)] if has_v1 else pd.DataFrame()
@@ -1460,7 +1527,7 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4: GAME PREDICTOR
 # ══════════════════════════════════════════════════════════════════════════════
-with tab4:
+if page == "Game Predictor":
     st.markdown("### Game Predictor")
     mode=st.radio("Model basis",["2026 V2 (preseason)","2025 V1 (historical)"],horizontal=True,key="pred_mode")
     use_v2_pred=(mode=="2026 V2 (preseason)") and has_v2
@@ -1649,7 +1716,7 @@ with tab4:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5: PORTAL LAB — full CFBD portal with openable player cards
 # ══════════════════════════════════════════════════════════════════════════════
-with tab5:
+if page == "Portal Lab":
     st.markdown("### Transfer Portal Lab — 2026")
     if portal_df.empty:
         st.warning("No portal file found (data/raw/2026_transfer_portal_cfbd.csv).")
@@ -1770,7 +1837,7 @@ with tab5:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 7: PLAYER STATS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab7:
+if page == "Player Stats":
     st.markdown("### Player Stat Leaderboards — 2025")
     ps=load_player_stats()
     if ps.empty:
@@ -1808,7 +1875,7 @@ with tab7:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: 2025 CFP RETRO
 # ══════════════════════════════════════════════════════════════════════════════
-with tab3:
+if page == "2025 CFP Retro":
     st.markdown("### 2025 CFP — Power Index Retrospective")
     if not has_v1:
         st.warning("Needs `cfb_combined_data.xlsx`. Place it in the app directory.")
@@ -1891,7 +1958,7 @@ with tab3:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 6: METHODOLOGY
 # ══════════════════════════════════════════════════════════════════════════════
-with tab6:
+if page == "Methodology":
     c1,c2=st.columns(2)
     with c1:
         st.markdown("### V2 — 2026 Forward-Looking Index")
